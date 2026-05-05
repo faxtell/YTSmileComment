@@ -12,8 +12,90 @@
 @property (nonatomic, copy) NSString *categoryKind;
 @end
 
-static const void *kYTNicoTutorialTriedKey = &kYTNicoTutorialTriedKey;
+static NSString * const kYTNicoTutorialGateDomain = @"com.example.yt-nico-chat-overlay";
+static NSString * const kYTNicoTutorialLicenseReadyKey = @"ready.v1";
 static const NSInteger kYTNicoTutorialButtonTag = 950531;
+static BOOL gYTNicoTutorialPresentedThisActiveSession = NO;
+static BOOL gYTNicoTutorialObserverInstalled = NO;
+
+static BOOL YTNicoTutorialLicenseReady(void) {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialGateDomain] ?: NSUserDefaults.standardUserDefaults;
+    return [d boolForKey:kYTNicoTutorialLicenseReadyKey];
+}
+
+static UIViewController *YTNicoTopViewControllerFrom(UIViewController *vc) {
+    if (!vc) return nil;
+    if (vc.presentedViewController) return YTNicoTopViewControllerFrom(vc.presentedViewController);
+    if ([vc isKindOfClass:UINavigationController.class]) return YTNicoTopViewControllerFrom(((UINavigationController *)vc).topViewController);
+    if ([vc isKindOfClass:UITabBarController.class]) return YTNicoTopViewControllerFrom(((UITabBarController *)vc).selectedViewController);
+    return vc;
+}
+
+static UIWindow *YTNicoKeyWindow(void) {
+    UIWindow *best = nil;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            UIWindowScene *ws = (UIWindowScene *)scene;
+            if (ws.activationState != UISceneActivationStateForegroundActive) continue;
+            for (UIWindow *w in ws.windows) {
+                if (w.isKeyWindow) return w;
+                if (!best && !w.hidden && w.alpha > 0.01) best = w;
+            }
+        }
+    }
+    if (!best) best = UIApplication.sharedApplication.keyWindow;
+    if (!best) {
+        for (UIWindow *w in UIApplication.sharedApplication.windows) {
+            if (!w.hidden && w.alpha > 0.01) { best = w; break; }
+        }
+    }
+    return best;
+}
+
+static BOOL YTNicoTopAlreadyTutorial(UIViewController *vc) {
+    if (!vc) return NO;
+    NSString *name = NSStringFromClass(vc.class);
+    return [name rangeOfString:@"YTNicoTutorialViewController"].location != NSNotFound;
+}
+
+static void YTNicoPresentTutorialIfNeeded(BOOL forceBecauseUnlicensed) {
+    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
+    BOOL licensed = YTNicoTutorialLicenseReady();
+    if (licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
+    if (!forceBecauseUnlicensed && licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
+    if (forceBecauseUnlicensed && licensed) return;
+    if (gYTNicoTutorialPresentedThisActiveSession && forceBecauseUnlicensed) return;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.85 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
+        BOOL nowLicensed = YTNicoTutorialLicenseReady();
+        if (forceBecauseUnlicensed && nowLicensed) return;
+        if (!forceBecauseUnlicensed && nowLicensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
+        if (gYTNicoTutorialPresentedThisActiveSession && forceBecauseUnlicensed) return;
+
+        UIWindow *window = YTNicoKeyWindow();
+        UIViewController *top = YTNicoTopViewControllerFrom(window.rootViewController);
+        if (!top || YTNicoTopAlreadyTutorial(top)) return;
+        if (top.presentedViewController) return;
+
+        YTNicoTutorialViewController *vc = [YTNicoTutorialViewController new];
+        vc.modalPresentationStyle = UIModalPresentationFullScreen;
+        [top presentViewController:vc animated:YES completion:nil];
+        gYTNicoTutorialPresentedThisActiveSession = YES;
+        [[DebugInspector shared] important:@"tutorial presented on app active unlicensed=%d", !nowLicensed];
+    });
+}
+
+static void YTNicoInstallTutorialObserver(void) {
+    if (gYTNicoTutorialObserverInstalled) return;
+    gYTNicoTutorialObserverInstalled = YES;
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+        gYTNicoTutorialPresentedThisActiveSession = NO;
+        if (!YTNicoTutorialLicenseReady()) YTNicoPresentTutorialIfNeeded(YES);
+    }];
+    [[DebugInspector shared] log:@"tutorial launch observer installed"];
+}
 
 static UIStackView *YTNicoFindFirstStack(UIView *view) {
     if ([view isKindOfClass:UIStackView.class]) return (UIStackView *)view;
@@ -44,20 +126,27 @@ static UIButton *YTNicoTutorialButton(void) {
     return button;
 }
 
+%hook UIApplication
+
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    BOOL result = %orig(application, launchOptions);
+    YTNicoInstallTutorialObserver();
+    if (!YTNicoTutorialLicenseReady()) YTNicoPresentTutorialIfNeeded(YES);
+    return result;
+}
+
+%end
+
 %hook YTNicoSettingsViewController
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    if ([objc_getAssociatedObject(self, kYTNicoTutorialTriedKey) boolValue]) return;
-    objc_setAssociatedObject(self, kYTNicoTutorialTriedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (![YTNicoTutorialViewController shouldShowTutorial]) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (self.presentedViewController) return;
-        YTNicoTutorialViewController *vc = [YTNicoTutorialViewController new];
-        vc.modalPresentationStyle = UIModalPresentationFullScreen;
-        [self presentViewController:vc animated:YES completion:nil];
-        [[DebugInspector shared] log:@"tutorial presented first launch"];
-    });
+    YTNicoInstallTutorialObserver();
+    if (!YTNicoTutorialLicenseReady()) {
+        YTNicoPresentTutorialIfNeeded(YES);
+        return;
+    }
+    if ([YTNicoTutorialViewController shouldShowTutorial]) YTNicoPresentTutorialIfNeeded(NO);
 }
 
 %end
@@ -82,3 +171,12 @@ static UIButton *YTNicoTutorialButton(void) {
 }
 
 %end
+
+%ctor {
+    if ([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            YTNicoInstallTutorialObserver();
+            if (!YTNicoTutorialLicenseReady()) YTNicoPresentTutorialIfNeeded(YES);
+        });
+    }
+}
