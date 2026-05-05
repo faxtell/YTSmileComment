@@ -17,7 +17,7 @@ static BOOL YTNicoSetIntegerIvar(id obj, const char *name, NSInteger value) {
     if (!ivar) ivar = class_getInstanceVariable(class_getSuperclass(object_getClass(obj)), name);
     if (!ivar) return NO;
     ptrdiff_t offset = ivar_getOffset(ivar);
-    uint8_t *bytes = (__bridge void *)obj;
+    uint8_t *bytes = (uint8_t *)(__bridge void *)obj;
     NSInteger *slot = (NSInteger *)(bytes + offset);
     if (*slot == value) return YES;
     *slot = value;
