@@ -16,6 +16,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSString *> *)blockWords;
 - (BOOL)mockMode;
 - (BOOL)debugLogging;
+- (CGFloat)commentDensity;
+- (CGFloat)longevity;
+- (BOOL)syncReplayToTimestamp;
+- (BOOL)preferLiveChat;
 
 - (void)setEnabled:(BOOL)value;
 - (void)setFontSize:(CGFloat)value;
@@ -28,6 +32,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setBlockWords:(NSArray<NSString *> *)value;
 - (void)setMockMode:(BOOL)value;
 - (void)setDebugLogging:(BOOL)value;
+- (void)setCommentDensity:(CGFloat)value;
+- (void)setLongevity:(CGFloat)value;
+- (void)setSyncReplayToTimestamp:(BOOL)value;
+- (void)setPreferLiveChat:(BOOL)value;
 - (void)reload;
 @end
 
