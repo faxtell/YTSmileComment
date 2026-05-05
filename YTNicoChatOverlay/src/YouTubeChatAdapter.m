@@ -15,6 +15,8 @@ static NSMutableSet<NSString *> *gPendingIds;
 static NSTimer *gDrainTimer;
 static NSString *gCurrentVideoId;
 static NSUInteger gGeneration;
+static NSString *gRecentDetectedVideoId;
+static NSDate *gRecentDetectedVideoDate;
 
 static NSMutableArray<NSDictionary *> *gTimedReplayMessages;
 static NSMutableSet<NSString *> *gTimedReplayIds;
@@ -39,6 +41,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
         gTimedReplayMessages = [NSMutableArray array];
         gTimedReplayIds = [NSMutableSet set];
         gCurrentVideoId = @"";
+        gRecentDetectedVideoId = @"";
         gGeneration = 0;
         gCurrentPlaybackSeconds = -1.0;
         gPlaybackUpdateWallTime = 0;
@@ -71,6 +74,24 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 
 #pragma mark - Video reset / generation
 
++ (void)noteDetectedVideoId:(NSString *)videoId source:(NSString *)source {
+    videoId = [self norm:videoId];
+    if (videoId.length != 11) return;
+    @synchronized (self) {
+        gRecentDetectedVideoId = [videoId copy];
+        gRecentDetectedVideoDate = NSDate.date;
+    }
+    [[DebugInspector shared] log:@"note detected videoId=%@ source=%@", videoId, source ?: @"unknown"];
+}
+
++ (NSString *)recentDetectedVideoId {
+    @synchronized (self) {
+        if (gRecentDetectedVideoId.length != 11 || !gRecentDetectedVideoDate) return @"";
+        if ([NSDate.date timeIntervalSinceDate:gRecentDetectedVideoDate] > 90.0) return @"";
+        return [gRecentDetectedVideoId copy] ?: @"";
+    }
+}
+
 + (void)ytnico_clearQueuesAndCaches {
     @synchronized (gPendingMessages) {
         [gPendingMessages removeAllObjects];
@@ -95,6 +116,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 + (void)resetForVideoId:(NSString *)videoId {
     videoId = [self norm:videoId];
     if (videoId.length != 11) return;
+    [self noteDetectedVideoId:videoId source:@"reset"];
     BOOL changed = NO;
     @synchronized (self) {
         changed = ![gCurrentVideoId isEqualToString:videoId];
@@ -113,6 +135,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 + (void)forceResetForVideoId:(NSString *)videoId {
     videoId = [self norm:videoId];
     if (videoId.length != 11) return;
+    [self noteDetectedVideoId:videoId source:@"forceReset"];
     @synchronized (self) {
         gCurrentVideoId = [videoId copy];
         gGeneration++;
