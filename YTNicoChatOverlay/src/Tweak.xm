@@ -315,6 +315,30 @@ static const void *kToastKey = &kToastKey;
     return widthScore + topBias + aspectScore + fullscreenBonus + clutterPenalty;
 }
 
+#pragma mark - Fetch helper
+
+- (NSString *)bestManualVideoId {
+    NSString *clip = UIPasteboard.generalPasteboard.string ?: @"";
+    NSString *videoId = [YouTubeChatAdapter extractVideoIdFromString:clip];
+    if (videoId.length == 11) return videoId;
+    videoId = [YouTubeChatAdapter currentVideoId];
+    if (videoId.length == 11) return videoId;
+    return @"";
+}
+
+- (void)startManualFetchForVideoId:(NSString *)videoId source:(NSString *)source {
+    if (videoId.length != 11) {
+        [self showSystemToast:@"動画リンクをコピーしてから💬をONにしてください"];
+        [[DebugInspector shared] important:@"manual fetch failed source=%@ no videoId", source ?: @"unknown"];
+        return;
+    }
+    [self ensureOverlayAttached];
+    [YouTubeChatAdapter forceResetForVideoId:videoId];
+    [self showSystemToast:[NSString stringWithFormat:@"%@コメント取得開始: %@", source.length ? [source stringByAppendingString:@"から"] : @"", videoId]];
+    [[DebugInspector shared] important:@"manual fetch source=%@ videoId=%@", source ?: @"unknown", videoId];
+    [YouTubeChatAdapter ytnico_fetchCommentsForVideoIdIgnoringThrottle:videoId];
+}
+
 #pragma mark - Floating controls
 
 - (void)ensureToggleButton {
@@ -356,7 +380,18 @@ static const void *kToastKey = &kToastKey;
 
 - (void)toggleOverlayEnabled {
     SettingsManager *settings = [SettingsManager shared];
-    [settings setEnabled:!settings.enabled];
+    BOOL nextEnabled = !settings.enabled;
+    [settings setEnabled:nextEnabled];
+    [self updateToggleButtonAppearance];
+
+    if (nextEnabled) {
+        NSString *videoId = [self bestManualVideoId];
+        [self startManualFetchForVideoId:videoId source:@"💬"];
+    } else {
+        [YouTubeChatAdapter clearCurrentVideoAndComments];
+        [self clearOverlayForVideoChange];
+        [self showSystemToast:@"コメントを非表示にしました"];
+    }
 }
 
 - (void)handleSettingsLongPress:(UILongPressGestureRecognizer *)gesture {
@@ -386,10 +421,7 @@ static const void *kToastKey = &kToastKey;
         [[self visiblePresenter] presentViewController:alert animated:YES completion:nil];
         return;
     }
-    [self ensureOverlayAttached];
-    [YouTubeChatAdapter forceResetForVideoId:videoId];
-    [self showSystemToast:[NSString stringWithFormat:@"コメント取得開始: %@", videoId]];
-    [YouTubeChatAdapter ytnico_fetchCommentsForVideoIdIgnoringThrottle:videoId];
+    [self startManualFetchForVideoId:videoId source:@"クリップボード"];
 }
 
 - (void)presentSettingsPage {
