@@ -32,27 +32,33 @@
 }
 
 - (CGFloat)effectiveFontSize {
-    return MAX(10.0, [SettingsManager shared].fontSize);
+    SettingsManager *settings = [SettingsManager shared];
+    CGFloat base = MAX(10.0, settings.fontSize);
+    if (!settings.adaptiveFontSize) return base;
+    CGFloat h = CGRectGetHeight(self.bounds);
+    if (h <= 0) return base;
+    CGFloat adaptive = h / 14.8;
+    adaptive = MAX(13.0, MIN(30.0, adaptive));
+    return MAX(10.0, MIN(42.0, base * 0.45 + adaptive * 0.55));
 }
 
 - (CGFloat)effectiveLaneHeight {
-    return ceil([self effectiveFontSize] + 9.0);
+    return ceil([self effectiveFontSize] + ([SettingsManager shared].niconicoMode ? 7.0 : 9.0));
 }
 
 - (NSInteger)wantedLaneCountForBounds {
     CGFloat font = [self effectiveFontSize];
     CGFloat laneHeight = [self effectiveLaneHeight];
-    CGFloat top = 6.0;
-    CGFloat bottom = 6.0;
+    CGFloat top = [SettingsManager shared].niconicoMode ? 4.0 : 6.0;
+    CGFloat bottom = [SettingsManager shared].niconicoMode ? 4.0 : 6.0;
     if (@available(iOS 11.0, *)) {
-        top += MAX(0.0, self.safeAreaInsets.top * 0.25);
-        bottom += MAX(0.0, self.safeAreaInsets.bottom * 0.25);
+        top += MAX(0.0, self.safeAreaInsets.top * 0.15);
+        bottom += MAX(0.0, self.safeAreaInsets.bottom * 0.15);
     }
 
     CGFloat usableHeight = MAX(0.0, CGRectGetHeight(self.bounds) - top - bottom);
     NSInteger byHeight = MAX(1, (NSInteger)floor(usableHeight / MAX(laneHeight, 1.0)));
     NSInteger settingMax = MAX(1, [SettingsManager shared].maxLines);
-
     NSInteger minimumPractical = CGRectGetHeight(self.bounds) >= font * 4.0 ? MIN(4, byHeight) : 1;
     NSInteger wanted = MIN(byHeight, MAX(settingMax, minimumPractical));
     return MAX(1, wanted);
@@ -62,11 +68,11 @@
     CGSize size = self.bounds.size;
     CGFloat laneHeight = [self effectiveLaneHeight];
     NSInteger wanted = [self wantedLaneCountForBounds];
-    CGFloat top = 6.0;
-    CGFloat bottom = 6.0;
+    CGFloat top = [SettingsManager shared].niconicoMode ? 4.0 : 6.0;
+    CGFloat bottom = [SettingsManager shared].niconicoMode ? 4.0 : 6.0;
     if (@available(iOS 11.0, *)) {
-        top += MAX(0.0, self.safeAreaInsets.top * 0.25);
-        bottom += MAX(0.0, self.safeAreaInsets.bottom * 0.25);
+        top += MAX(0.0, self.safeAreaInsets.top * 0.15);
+        bottom += MAX(0.0, self.safeAreaInsets.bottom * 0.15);
     }
 
     BOOL sizeChanged = fabs(size.width - self.lastLayoutSize.width) > 1.0 || fabs(size.height - self.lastLayoutSize.height) > 1.0;
@@ -88,7 +94,7 @@
     [[DebugInspector shared] log:@"lanes rebuilt count=%ld height=%.1f bounds=%@", (long)wanted, laneHeight, NSStringFromCGRect(self.bounds)];
 }
 
-- (NSInteger)pickLaneForCommentWidth:(CGFloat)width speed:(CGFloat)speed {
+- (NSInteger)pickLaneForCommentWidth:(CGFloat)width travelDistance:(CGFloat)travelDistance duration:(NSTimeInterval)duration {
     [self rebuildLanesForce:NO];
     if (self.laneAvailableAt.count == 0) return NSNotFound;
 
@@ -96,8 +102,6 @@
     NSInteger selectedIndex = 0;
     CFTimeInterval earliestAvailable = DBL_MAX;
 
-    // Niconico-style: fill from the top lane downward.
-    // Use the first lane that is already safe, instead of randomly spreading comments.
     for (NSInteger i = 0; i < self.laneAvailableAt.count; i++) {
         CFTimeInterval availableAt = self.laneAvailableAt[i].doubleValue;
         if (availableAt <= now) {
@@ -111,10 +115,12 @@
         }
     }
 
-    CGFloat gap = 42.0;
-    CFTimeInterval nextAvailable = now + ((width + gap) / MAX(speed, 1.0));
+    CGFloat spacing = [SettingsManager shared].niconicoMode ? 26.0 : 42.0;
+    CGFloat pixelsPerSecond = travelDistance / MAX(duration, 0.1);
+    CFTimeInterval tailClearDelay = (width + spacing) / MAX(pixelsPerSecond, 1.0);
+    CFTimeInterval nextAvailable = now + tailClearDelay;
     CFTimeInterval laneCurrent = self.laneAvailableAt[selectedIndex].doubleValue;
-    if (laneCurrent > now) nextAvailable = laneCurrent + ((width + gap) / MAX(speed, 1.0));
+    if (laneCurrent > now) nextAvailable = laneCurrent + tailClearDelay;
     self.laneAvailableAt[selectedIndex] = @(nextAvailable);
     return selectedIndex;
 }
@@ -141,24 +147,31 @@
         if (self.bounds.size.width < 80 || self.bounds.size.height < 40) return;
         [self rebuildLanesForce:NO];
 
+        SettingsManager *settings = [SettingsManager shared];
         CGFloat font = [self effectiveFontSize];
         CGFloat laneHeight = MAX(1.0, self.laneHeight);
         NSString *renderedText = [self renderedTextForMessage:message];
         NSDictionary *attrs = @{NSFontAttributeName:[UIFont boldSystemFontOfSize:font]};
-        CGFloat measured = [renderedText sizeWithAttributes:attrs].width + 44.0;
-        CGFloat width = MIN(MAX(84.0, measured), self.bounds.size.width * 1.8);
-        CGFloat speed = MAX(40.0, [SettingsManager shared].speed);
-        NSInteger lane = [self pickLaneForCommentWidth:width speed:speed];
+        CGFloat measured = [renderedText sizeWithAttributes:attrs].width + 52.0;
+        CGFloat width = MAX(84.0, measured); // Do not clamp long comments; Niconico-style comments should flow full-length.
+        CGFloat travelDistance = self.bounds.size.width + width + 24.0;
+        NSTimeInterval duration;
+        if (settings.niconicoMode) {
+            duration = MAX(2.5, MIN(10.0, settings.scrollDuration));
+        } else {
+            CGFloat speed = MAX(40.0, settings.speed);
+            duration = travelDistance / speed;
+        }
+        NSInteger lane = [self pickLaneForCommentWidth:width travelDistance:travelDistance duration:duration];
         if (lane == NSNotFound) return;
 
         CGFloat y = [self yForLane:lane];
         NicoCommentLayer *layer = [NicoCommentLayer layer];
-        [layer configureWithMessage:message fontSize:font opacity:[SettingsManager shared].opacity];
+        [layer configureWithMessage:message fontSize:font opacity:settings.opacity];
         layer.frame = CGRectMake(self.bounds.size.width + 8.0, y, width, laneHeight);
         layer.zPosition = 10 + lane;
         [self.layer addSublayer:layer];
 
-        NSTimeInterval duration = (self.bounds.size.width + width + 20.0) / speed;
         [[DebugInspector shared] log:@"comment lane=%ld/%ld y=%.1f width=%.1f duration=%.1f text=%@", (long)lane, (long)self.laneCount, y, width, duration, renderedText];
 
         [CATransaction begin];
