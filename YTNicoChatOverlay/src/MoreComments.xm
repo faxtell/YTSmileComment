@@ -10,17 +10,33 @@
 static CFTimeInterval gYTNicoLiveBurstWindow = 0;
 static NSUInteger gYTNicoLiveBurstIndex = 0;
 
-static NSTimeInterval YTNicoLiveSpreadDelay(void) {
+static NSTimeInterval YTNicoLiveSpreadDelay(NSString *text) {
     CFTimeInterval now = CACurrentMediaTime();
-    if (now - gYTNicoLiveBurstWindow > 1.25) {
+    if (now - gYTNicoLiveBurstWindow > 1.85) {
         gYTNicoLiveBurstWindow = now;
         gYTNicoLiveBurstIndex = 0;
     }
+
     NSUInteger index = gYTNicoLiveBurstIndex++;
-    double lane = (double)(index % 10) * 0.16;
-    double wave = (double)(index / 10) * 0.28;
-    double jitter = ((double)arc4random_uniform(120)) / 1000.0;
-    return MIN(2.8, lane + wave + jitter);
+
+    // YouTube live chat often arrives in small bursts. Spread each burst more loosely so
+    // messages do not launch in a perfectly aligned wall.
+    double rowOffset = (double)(index % 14) * 0.21;          // 0.00 - 2.73
+    double waveOffset = (double)(index / 14) * 0.48;        // extra waves for larger bursts
+    double jitter = ((double)arc4random_uniform(420)) / 1000.0; // 0.00 - 0.419
+    double micro = ((double)arc4random_uniform(90)) / 1000.0;   // tiny human-like variance
+
+    // Long comments visually occupy more space, so delay them very slightly more.
+    NSUInteger len = text.length;
+    double lengthOffset = 0.0;
+    if (len >= 70) lengthOffset = 0.48;
+    else if (len >= 38) lengthOffset = 0.24;
+
+    // Every few comments, add an extra small gap. This gives a more organic rhythm.
+    double pocketGap = 0.0;
+    if (index > 0 && index % 7 == 0) pocketGap = ((double)arc4random_uniform(520)) / 1000.0;
+
+    return MIN(5.5, rowOffset + waveOffset + jitter + micro + lengthOffset + pocketGap);
 }
 
 %hook YouTubeChatAdapter
@@ -57,7 +73,7 @@ static NSTimeInterval YTNicoLiveSpreadDelay(void) {
         %orig(author, text, messageId);
         return;
     }
-    NSTimeInterval delay = YTNicoLiveSpreadDelay();
+    NSTimeInterval delay = YTNicoLiveSpreadDelay(text ?: @"");
     NSString *a = [author copy] ?: @"";
     NSString *t = [text copy] ?: @"";
     NSString *m = [messageId copy] ?: NSUUID.UUID.UUIDString;
