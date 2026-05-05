@@ -1,6 +1,9 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+static CFTimeInterval gYTNicoLastPiPBubbleHideScan = 0;
+static BOOL gYTNicoPiPBubbleHideQueued = NO;
+
 static BOOL YTNicoStringContainsAnyForPiPBubble(NSString *s, NSArray<NSString *> *needles) {
     for (NSString *n in needles) {
         if ([s rangeOfString:n options:NSCaseInsensitiveSearch].location != NSNotFound) return YES;
@@ -47,21 +50,34 @@ static BOOL YTNicoLooksLikeBubbleButtonInPiP(UIView *view) {
     return w >= 30 && w <= 92 && h >= 30 && h <= 92 && fabs(w - h) <= 30;
 }
 
-static void YTNicoHidePiPBubbleButtonsInView(UIView *view) {
-    if (!view) return;
+static void YTNicoHidePiPBubbleButtonsInView(UIView *view, NSUInteger *hiddenCount) {
+    if (!view || *hiddenCount > 4) return;
     if (YTNicoLooksLikeBubbleButtonInPiP(view)) {
         view.hidden = YES;
         view.alpha = 0.0;
         view.userInteractionEnabled = NO;
+        (*hiddenCount)++;
     }
-    for (UIView *sub in view.subviews) YTNicoHidePiPBubbleButtonsInView(sub);
+    for (UIView *sub in view.subviews) YTNicoHidePiPBubbleButtonsInView(sub, hiddenCount);
 }
 
-static void YTNicoHidePiPBubbleButtons(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        for (UIWindow *window in UIApplication.sharedApplication.windows) {
-            YTNicoHidePiPBubbleButtonsInView(window);
-        }
+static void YTNicoHidePiPBubbleButtonsNow(void) {
+    NSUInteger hiddenCount = 0;
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        YTNicoHidePiPBubbleButtonsInView(window, &hiddenCount);
+        if (hiddenCount > 4) break;
+    }
+}
+
+static void YTNicoHidePiPBubbleButtonsDebounced(NSTimeInterval delay) {
+    CFTimeInterval now = CACurrentMediaTime();
+    if (gYTNicoPiPBubbleHideQueued) return;
+    if (now - gYTNicoLastPiPBubbleHideScan < 0.75) return;
+    gYTNicoPiPBubbleHideQueued = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gYTNicoPiPBubbleHideQueued = NO;
+        gYTNicoLastPiPBubbleHideScan = CACurrentMediaTime();
+        YTNicoHidePiPBubbleButtonsNow();
     });
 }
 
@@ -69,24 +85,21 @@ static void YTNicoHidePiPBubbleButtons(void) {
 
 - (void)didMoveToWindow {
     %orig;
-    YTNicoHidePiPBubbleButtons();
-}
-
-- (void)layoutSubviews {
-    %orig;
-    YTNicoHidePiPBubbleButtons();
+    YTNicoHidePiPBubbleButtonsDebounced(0.25);
 }
 
 %end
 
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
-        YTNicoHidePiPBubbleButtons();
+        YTNicoHidePiPBubbleButtonsDebounced(0.6);
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-            YTNicoHidePiPBubbleButtons();
+            gYTNicoLastPiPBubbleHideScan = 0;
+            YTNicoHidePiPBubbleButtonsDebounced(0.35);
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-            YTNicoHidePiPBubbleButtons();
+            gYTNicoLastPiPBubbleHideScan = 0;
+            YTNicoHidePiPBubbleButtonsDebounced(0.35);
         }];
     });
 }
