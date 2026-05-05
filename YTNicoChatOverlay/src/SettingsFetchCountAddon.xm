@@ -1,6 +1,10 @@
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 #import "YTNicoSettingsViewController.h"
 #import "SettingsManager.h"
+
+static const void *kYTNicoFetchValueLabelKey = &kYTNicoFetchValueLabelKey;
+static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
 
 %hook YTNicoSettingsViewController
 - (void)viewDidAppear:(BOOL)animated {
@@ -52,13 +56,20 @@
     slider.maximumValue = 3000;
     slider.value = settings.maxFetchComments;
     [box addArrangedSubview:slider];
-    void (^update)(float) = ^(float v) { value.text = [NSString stringWithFormat:@"%.0f 件", v]; progress.progress = (v - 100.0f) / 2900.0f; };
-    update(slider.value);
-    [slider addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
-        UISlider *s = (UISlider *)action.sender;
-        [settings setMaxFetchComments:(NSInteger)roundf(s.value)];
-        update(s.value);
-    }] forControlEvents:UIControlEventValueChanged];
+    objc_setAssociatedObject(slider, kYTNicoFetchValueLabelKey, value, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(slider, kYTNicoFetchProgressKey, progress, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    value.text = [NSString stringWithFormat:@"%.0f 件", slider.value];
+    progress.progress = (slider.value - 100.0f) / 2900.0f;
+    [slider addTarget:self action:@selector(ytnico_fetchCountSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [stack insertArrangedSubview:card atIndex:MIN((NSUInteger)4, stack.arrangedSubviews.count)];
+}
+
+%new
+- (void)ytnico_fetchCountSliderChanged:(UISlider *)slider {
+    UILabel *value = objc_getAssociatedObject(slider, kYTNicoFetchValueLabelKey);
+    UIProgressView *progress = objc_getAssociatedObject(slider, kYTNicoFetchProgressKey);
+    [SettingsManager.shared setMaxFetchComments:(NSInteger)roundf(slider.value)];
+    value.text = [NSString stringWithFormat:@"%.0f 件", slider.value];
+    progress.progress = (slider.value - 100.0f) / 2900.0f;
 }
 %end
