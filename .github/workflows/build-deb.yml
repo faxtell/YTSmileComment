@@ -39,45 +39,37 @@ jobs:
         run: |
           brew update
           brew install ldid dpkg xz
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
 
-      - name: Install Theos and prepare dm.pl
+      - name: Install Theos
         run: |
           rm -rf "$HOME/theos"
           git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
           cd "$HOME/theos"
           git submodule update --init --recursive
-
-          mkdir -p "$HOME/theos/bin"
-
-          # Current Theos provides dm.pl as a submodule under vendor/dm.pl.
-          # Some setups also expose it via bin/dm.pl. Normalize that here.
-          if [[ -x "$HOME/theos/vendor/dm.pl/dm.pl" && ! -x "$HOME/theos/bin/dm.pl" ]]; then
-            ln -sf "$HOME/theos/vendor/dm.pl/dm.pl" "$HOME/theos/bin/dm.pl"
-          fi
-
-          # Fallback: install dm.pl from npm only if Theos did not provide it.
-          if [[ ! -x "$HOME/theos/bin/dm.pl" ]]; then
-            echo "[WARN] dm.pl not found in Theos; installing fallback via npm"
-            npm install -g @theosdev/dm.pl
-            DMPL_PATH="$(command -v dm.pl || true)"
-            if [[ -z "$DMPL_PATH" ]]; then
-              echo "[ERROR] dm.pl could not be installed"
-              exit 1
-            fi
-            ln -sf "$DMPL_PATH" "$HOME/theos/bin/dm.pl"
-            chmod +x "$HOME/theos/bin/dm.pl"
-          fi
-
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
           echo "[INFO] THEOS=$HOME/theos"
-          echo "[INFO] dm.pl path: $(ls -l "$HOME/theos/bin/dm.pl")"
 
       - name: Build deb package
+        env:
+          THEOS: /Users/runner/theos
         run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$THEOS/bin:$THEOS/vendor/dm.pl:$PATH"
+          PACKAGER="$(command -v dpkg-deb)"
+          echo "[INFO] THEOS=$THEOS"
+          echo "[INFO] deb packager=$PACKAGER"
           cd YTNicoChatOverlay
-          chmod +x build_deb.sh
-          ./build_deb.sh
+          make clean \
+            _THEOS_PLATFORM_DPKG_DEB="$PACKAGER" \
+            _THEOS_PLATFORM_DPKG_DEB_COMPRESSION=xz \
+            THEOS_PLATFORM_DEB_COMPRESSION_TYPE=xz
+          make package FINALPACKAGE=1 \
+            _THEOS_PLATFORM_DPKG_DEB="$PACKAGER" \
+            _THEOS_PLATFORM_DPKG_DEB_COMPRESSION=xz \
+            THEOS_PLATFORM_DEB_COMPRESSION_TYPE=xz
           echo "Generated packages:"
           find packages .theos/packages -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \; 2>/dev/null || true
 
