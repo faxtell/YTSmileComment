@@ -35,17 +35,33 @@ static const void *kCtlKey = &kCtlKey;
 }
 
 - (void)reloadSettings {
-    NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    if (![SettingsManager shared].enabled) [overlay clearComments];
+    if (![SettingsManager shared].enabled) [self clearOverlayForVideoChange];
     [self updateToggleButtonAppearance];
     YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
     [adapter stopObserving];
     [self setup];
 }
 
+- (void)clearAllOverlaysInView:(UIView *)view {
+    if (!view) return;
+    if ([view isKindOfClass:NicoChatOverlayView.class]) {
+        NicoChatOverlayView *overlay = (NicoChatOverlayView *)view;
+        [overlay clearComments];
+    }
+    for (UIView *subview in view.subviews) [self clearAllOverlaysInView:subview];
+}
+
 - (void)clearOverlayForVideoChange {
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
     [overlay clearComments];
+    [self clearAllOverlaysInView:self.window];
+}
+
+- (void)detachOverlay {
+    NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
+    if (!overlay) return;
+    [overlay clearComments];
+    [overlay removeFromSuperview];
 }
 
 - (void)setup {
@@ -82,10 +98,12 @@ static const void *kCtlKey = &kCtlKey;
         objc_setAssociatedObject(self, kOverlayKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (overlay.superview != target) {
+        [overlay clearComments];
         [overlay removeFromSuperview];
         overlay.frame = frame;
         [target addSubview:overlay];
     } else if (!CGRectEqualToRect(overlay.frame, frame)) {
+        [overlay clearComments];
         overlay.frame = frame;
     }
     [target bringSubviewToFront:overlay];
@@ -93,31 +111,29 @@ static const void *kCtlKey = &kCtlKey;
 }
 
 - (void)ensureFallbackOverlayAttached {
-    if (!self.window) return;
-    CGRect bounds = self.window.bounds;
-    CGFloat h = MIN(bounds.size.height, MAX(160.0, bounds.size.width * 9.0 / 16.0));
-    CGRect frame = CGRectMake(0, 0, bounds.size.width, h);
-    [self overlayForTargetView:self.window frame:frame];
-    [[DebugInspector shared] log:@"Attached fallback overlay frame=%@", NSStringFromCGRect(frame)];
+    // Do not attach to UIWindow. A window-level fallback causes comments to appear over
+    // the status bar / Home feed chrome. If no safe player-like target exists, stay silent.
+    [[DebugInspector shared] log:@"Fallback overlay disabled; detaching overlay"];
+    [self detachOverlay];
 }
 
 - (void)ensureOverlayAttached {
     UIView *player = [self findBestPlayerCandidateInView:self.window];
     if (!player) {
-        [[DebugInspector shared] log:@"No player candidate found in window; using fallback"];
-        [self ensureFallbackOverlayAttached];
+        [[DebugInspector shared] log:@"No safe player candidate found; overlay detached"];
+        [self detachOverlay];
         return;
     }
 
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
     if (player == overlay || [player isKindOfClass:NicoChatOverlayView.class] || [player isKindOfClass:UIControl.class] || [player isKindOfClass:UIWindow.class]) {
-        [[DebugInspector shared] log:@"Rejected unsafe player candidate %@; using fallback", NSStringFromClass(player.class)];
-        [self ensureFallbackOverlayAttached];
+        [[DebugInspector shared] log:@"Rejected unsafe player candidate %@; overlay detached", NSStringFromClass(player.class)];
+        [self detachOverlay];
         return;
     }
 
     if (overlay && (player == overlay || [player isDescendantOfView:overlay])) {
-        [self ensureFallbackOverlayAttached];
+        [self detachOverlay];
         return;
     }
 
@@ -152,6 +168,9 @@ static const void *kCtlKey = &kCtlKey;
     if ([className containsString:@"chat"]) return YES;
     if ([className containsString:@"caption"]) return YES;
     if ([className containsString:@"subtitle"]) return YES;
+    if ([className containsString:@"statusbar"]) return YES;
+    if ([className containsString:@"navigationbar"]) return YES;
+    if ([className containsString:@"tabbar"]) return YES;
     return NO;
 }
 
@@ -165,9 +184,13 @@ static const void *kCtlKey = &kCtlKey;
             CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
             CGFloat screenW = UIScreen.mainScreen.bounds.size.width;
             CGFloat screenH = UIScreen.mainScreen.bounds.size.height;
-            BOOL portraitLikePlayer = (ratio > 1.35 && ratio < 2.20 && rect.size.width >= screenW * 0.60 && rect.origin.y <= screenH * 0.55);
-            BOOL fullscreenLandscapePlayer = (ratio > 1.20 && ratio < 2.50 && rect.size.width >= screenW * 0.80 && rect.size.height >= screenH * 0.42);
-            if (portraitLikePlayer || fullscreenLandscapePlayer) [candidates addObject:view];
+            CGFloat safeTop = 20.0;
+            if (@available(iOS 11.0, *)) safeTop = self.window.safeAreaInsets.top;
+            BOOL belowStatusBar = rect.origin.y >= MAX(0.0, safeTop - 2.0);
+            BOOL portraitLikePlayer = (ratio > 1.20 && ratio < 2.35 && rect.size.width >= screenW * 0.45 && rect.origin.y <= screenH * 0.70 && belowStatusBar);
+            BOOL fullscreenLandscapePlayer = (ratio > 1.20 && ratio < 2.70 && rect.size.width >= screenW * 0.80 && rect.size.height >= screenH * 0.42);
+            BOOL thumbnailLikePlayer = (ratio > 1.20 && ratio < 2.35 && rect.size.width >= screenW * 0.32 && rect.size.width <= screenW * 0.98 && rect.origin.y >= safeTop + 8.0 && rect.origin.y <= screenH * 0.85);
+            if (portraitLikePlayer || fullscreenLandscapePlayer || thumbnailLikePlayer) [candidates addObject:view];
         }
     }
 
@@ -180,7 +203,7 @@ static const void *kCtlKey = &kCtlKey;
     CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
     CGFloat aspectDelta = fabs(ratio - (16.0 / 9.0));
     CGFloat widthScore = MIN(rect.size.width / MAX(screen.width, 1.0), 1.2) * 40.0;
-    CGFloat topBias = (rect.origin.y <= screen.height * 0.25) ? 22.0 : ((rect.origin.y <= screen.height * 0.55) ? 8.0 : -35.0);
+    CGFloat topBias = (rect.origin.y <= screen.height * 0.25) ? 18.0 : ((rect.origin.y <= screen.height * 0.70) ? 10.0 : -18.0);
     CGFloat aspectScore = MAX(0.0, 45.0 - aspectDelta * 70.0);
     CGFloat fullscreenBonus = (rect.size.width >= screen.width * 0.95 && ratio > 1.20) ? 14.0 : 0.0;
     CGFloat clutterPenalty = view.subviews.count > 90 ? -14.0 : 0.0;
@@ -244,6 +267,7 @@ static const void *kCtlKey = &kCtlKey;
 - (void)emitDisplayTestComment {
     [self ensureOverlayAttached];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
+    if (!overlay.superview) return;
     NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:@"表示テスト: これが流れればOverlayは正常です" timestamp:NSDate.date];
     [overlay enqueueMessage:msg];
 }
@@ -260,8 +284,10 @@ static const void *kCtlKey = &kCtlKey;
     [self ensureOverlayAttached];
     [YouTubeChatAdapter resetForVideoId:videoId];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
-    [overlay enqueueMessage:msg];
+    if (overlay.superview) {
+        NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
+        [overlay enqueueMessage:msg];
+    }
     [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
 }
 
@@ -281,8 +307,7 @@ static const void *kCtlKey = &kCtlKey;
     if (!message || message.text.length == 0 || ![SettingsManager shared].enabled) return;
     [self ensureOverlayAttached];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    if (!overlay) [self ensureFallbackOverlayAttached];
-    overlay = objc_getAssociatedObject(self, kOverlayKey);
+    if (!overlay || !overlay.superview) return;
     [overlay enqueueMessage:message];
 }
 @end
