@@ -243,12 +243,29 @@ static const void *kCtlKey = &kCtlKey;
     [overlay enqueueMessage:msg];
 }
 
+- (void)fetchCommentsFromClipboard {
+    NSString *clip = UIPasteboard.generalPasteboard.string ?: @"";
+    NSString *videoId = [YouTubeChatAdapter extractVideoIdFromString:clip];
+    if (videoId.length != 11) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"動画URL/IDが見つかりません" message:@"YouTubeの共有URL、watch URL、shorts URL、または11文字の動画IDをコピーしてから再実行してください。" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [[self visiblePresenter] presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [self ensureOverlayAttached];
+    NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
+    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
+    [overlay enqueueMessage:msg];
+    [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
+}
+
 - (void)presentSettingsPanelFromView:(UIView *)sourceView {
     SettingsManager *s = [SettingsManager shared];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"YT Nico Chat Overlay" message:@"短押し: 表示/非表示\n長押し: この設定" preferredStyle:UIAlertControllerStyleActionSheet];
 
     __weak typeof(self) weakSelf = self;
     [alert addAction:[UIAlertAction actionWithTitle:@"表示テストコメントを流す" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [weakSelf emitDisplayTestComment]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"クリップボードの動画URL/IDからコメント取得" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [weakSelf fetchCommentsFromClipboard]; }]];
     [alert addAction:[UIAlertAction actionWithTitle:(s.enabled ? @"コメント表示をOFF" : @"コメント表示をON") style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setEnabled:!s.enabled]; }]];
     [alert addAction:[UIAlertAction actionWithTitle:(s.showAuthorName ? @"投稿者名を非表示" : @"投稿者名を表示") style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setShowAuthorName:!s.showAuthorName]; }]];
     [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"文字サイズ +  現在 %.0f", s.fontSize] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setFontSize:s.fontSize + 2.0]; }]];
