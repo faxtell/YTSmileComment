@@ -41,14 +41,23 @@ static void YTNicoMaybeAutoFetch(NSURLRequest *request, NSData *body) {
     if (videoId.length != 11) return;
 
     NSDate *now = NSDate.date;
+    BOOL shouldFetch = NO;
+    BOOL changedVideo = NO;
     @synchronized ([YouTubeChatAdapter class]) {
-        if ([YTNicoLastAutoVideoId isEqualToString:videoId] && YTNicoLastAutoDate && [now timeIntervalSinceDate:YTNicoLastAutoDate] < 45.0) return;
+        changedVideo = ![YTNicoLastAutoVideoId isEqualToString:videoId];
+        if (!changedVideo && YTNicoLastAutoDate && [now timeIntervalSinceDate:YTNicoLastAutoDate] < 45.0) return;
         YTNicoLastAutoVideoId = [videoId copy];
         YTNicoLastAutoDate = now;
+        shouldFetch = YES;
     }
+    if (!shouldFetch) return;
 
-    [[DebugInspector shared] log:@"auto fetch videoId=%@", videoId];
+    [[DebugInspector shared] log:@"auto fetch videoId=%@ changed=%d", videoId, changedVideo];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [YouTubeChatAdapter resetForVideoId:videoId];
+    });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (![[YouTubeChatAdapter currentVideoId] isEqualToString:videoId]) return;
         [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:[NSString stringWithFormat:@"自動コメント取得開始: %@", videoId] messageId:NSUUID.UUID.UUIDString];
         [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
     });
