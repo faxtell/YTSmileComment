@@ -12,6 +12,7 @@
 - (void)stopObserving;
 + (void)ingestPotentialInnertubeData:(NSData *)data request:(NSURLRequest *)request;
 + (void)ingestPotentialJSONObject:(id)object;
++ (void)broadcastAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId;
 @end
 
 @interface YouTubeChatAdapter (Replay)
