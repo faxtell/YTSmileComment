@@ -40,8 +40,14 @@ static BOOL YTNicoDirectFetchActive = NO;
 }
 
 + (void)ytdf_processWatchHTML:(NSString *)html videoId:(NSString *)videoId {
-    NSString *apiKey = [self ytdf_matchFirst:html pattern:@"\\\"INNERTUBE_API_KEY\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""];
-    NSString *clientVersion = [self ytdf_matchFirst:html pattern:@"\\\"INNERTUBE_CLIENT_VERSION\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""];
+    NSString *apiKey = [self ytdf_firstMatchIn:html patterns:@[
+        @"\"INNERTUBE_API_KEY\"\\s*:\\s*\"([^\"]+)\"",
+        @"\\\"INNERTUBE_API_KEY\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
+    ]];
+    NSString *clientVersion = [self ytdf_firstMatchIn:html patterns:@[
+        @"\"INNERTUBE_CLIENT_VERSION\"\\s*:\\s*\"([^\"]+)\"",
+        @"\\\"INNERTUBE_CLIENT_VERSION\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
+    ]];
     if (clientVersion.length == 0) clientVersion = @"2.20250101.01.00";
     if (apiKey.length == 0) { [self ytdf_finish]; return; }
 
@@ -51,9 +57,21 @@ static BOOL YTNicoDirectFetchActive = NO;
         NSInteger emitted = 0;
         if (text.length > 0) emitted = [self ytdf_parseResponseString:text maxCount:40];
         if (emitted == 0) {
-            [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+            NSString *token = [self ytdf_firstContinuationTokenInString:text];
+            if (token.length > 0) {
+                NSDictionary *nextBody = @{@"context":@{@"client":@{@"clientName":@"WEB", @"clientVersion":clientVersion, @"hl":@"ja", @"gl":@"JP"}}, @"continuation":token};
+                [self ytdf_postURL:url body:nextBody completion:^(NSString *text2) {
+                    NSInteger emitted2 = text2.length > 0 ? [self ytdf_parseResponseString:text2 maxCount:40] : 0;
+                    if (emitted2 == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+                    [self ytdf_finish];
+                }];
+            } else {
+                [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+                [self ytdf_finish];
+            }
+        } else {
+            [self ytdf_finish];
         }
-        [self ytdf_finish];
     }];
 }
 
@@ -97,7 +115,7 @@ static BOOL YTNicoDirectFetchActive = NO;
         count++;
     };
 
-    NSRegularExpression *classic = [NSRegularExpression regularExpressionWithPattern:@"\\\"authorText\\\"\\s*:\\s*\\{\\s*\\\"simpleText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\".*?\\\"contentText\\\"\\s*:\\s*\\{\\s*\\\"runs\\\"\\s*:\\s*\\[(.*?)\\]" options:NSRegularExpressionDotMatchesLineSeparators error:nil];
+    NSRegularExpression *classic = [NSRegularExpression regularExpressionWithPattern:@"\"authorText\"\\s*:\\s*\\{\\s*\"simpleText\"\\s*:\\s*\"([^\"]+)\".*?\"contentText\"\\s*:\\s*\\{\\s*\"runs\"\\s*:\\s*\\[(.*?)\\]" options:NSRegularExpressionDotMatchesLineSeparators error:nil];
     for (NSTextCheckingResult *m in [classic matchesInString:s options:0 range:NSMakeRange(0, s.length)]) {
         if (count >= maxCount) break;
         if (m.numberOfRanges < 3) continue;
@@ -112,26 +130,26 @@ static BOOL YTNicoDirectFetchActive = NO;
         for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:80]) {
             if (count >= maxCount) break;
             NSString *author = [self ytdf_firstMatchIn:block patterns:@[
-                @"\\\"authorText\\\".*?\\\"simpleText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                @"\\\"authorName\\\".*?\\\"simpleText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                @"\\\"authorName\\\".*?\\\"text\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                @"\\\"displayName\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                @"\\\"name\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
+                @"\"authorText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"authorName\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"authorName\".*?\"text\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"displayName\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"name\"\\s*:\\s*\"([^\"]+)\""
             ]];
             NSString *text = @"";
             NSString *runs = [self ytdf_firstMatchIn:block patterns:@[
-                @"\\\"contentText\\\".*?\\\"runs\\\"\\s*:\\s*\\[(.*?)\\]",
-                @"\\\"message\\\".*?\\\"runs\\\"\\s*:\\s*\\[(.*?)\\]",
-                @"\\\"bodyText\\\".*?\\\"runs\\\"\\s*:\\s*\\[(.*?)\\]"
+                @"\"contentText\".*?\"runs\"\\s*:\\s*\\[(.*?)\\]",
+                @"\"message\".*?\"runs\"\\s*:\\s*\\[(.*?)\\]",
+                @"\"bodyText\".*?\"runs\"\\s*:\\s*\\[(.*?)\\]"
             ]];
             if (runs.length > 0) text = [self ytdf_textFromRunsString:runs];
             if (text.length == 0) {
                 text = [self ytdf_firstMatchIn:block patterns:@[
-                    @"\\\"contentText\\\".*?\\\"simpleText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                    @"\\\"commentText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                    @"\\\"bodyText\\\".*?\\\"simpleText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                    @"\\\"content\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
-                    @"\\\"message\\\".*?\\\"simpleText\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
+                    @"\"contentText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"",
+                    @"\"commentText\"\\s*:\\s*\"([^\"]+)\"",
+                    @"\"bodyText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"",
+                    @"\"content\"\\s*:\\s*\"([^\"]+)\"",
+                    @"\"message\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\""
                 ]];
             }
             emit(author, text);
@@ -144,7 +162,7 @@ static BOOL YTNicoDirectFetchActive = NO;
 
 + (NSArray<NSString *> *)ytdf_blocksForKey:(NSString *)key inString:(NSString *)s limit:(NSInteger)limit {
     NSMutableArray<NSString *> *blocks = [NSMutableArray array];
-    NSString *marker = [NSString stringWithFormat:@"\\\"%@\\\"", key];
+    NSString *marker = [NSString stringWithFormat:@"\"%@\"", key];
     NSRange search = NSMakeRange(0, s.length);
     while (blocks.count < limit) {
         NSRange r = [s rangeOfString:marker options:0 range:search];
@@ -152,13 +170,23 @@ static BOOL YTNicoDirectFetchActive = NO;
         NSRange braceSearch = NSMakeRange(NSMaxRange(r), s.length - NSMaxRange(r));
         NSRange br = [s rangeOfString:@"{" options:0 range:braceSearch];
         if (br.location == NSNotFound) break;
-        NSString *block = [self ytdf_balancedObjectFromString:s start:br.location maxLength:18000];
+        NSString *block = [self ytdf_balancedObjectFromString:s start:br.location maxLength:22000];
         if (block.length > 0) [blocks addObject:block];
         NSUInteger next = br.location + MAX((NSUInteger)1, block.length);
         if (next >= s.length) break;
         search = NSMakeRange(next, s.length - next);
     }
     return blocks;
+}
+
++ (NSString *)ytdf_firstContinuationTokenInString:(NSString *)s {
+    if (s.length == 0) return @"";
+    NSArray<NSString *> *patterns = @[
+        @"\"continuationCommand\".*?\"token\"\\s*:\\s*\"([^\"]+)\"",
+        @"\"nextContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\"",
+        @"\"reloadContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\""
+    ];
+    return [self ytdf_firstMatchIn:s patterns:patterns];
 }
 
 + (NSString *)ytdf_balancedObjectFromString:(NSString *)s start:(NSUInteger)start maxLength:(NSUInteger)maxLength {
@@ -195,7 +223,7 @@ static BOOL YTNicoDirectFetchActive = NO;
 
 + (NSString *)ytdf_textFromRunsString:(NSString *)runs {
     NSMutableString *out = [NSMutableString string];
-    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\\\"text\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"" options:0 error:nil];
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\"text\"\\s*:\\s*\"([^\"]*)\"" options:0 error:nil];
     NSArray<NSTextCheckingResult *> *matches = [re matchesInString:runs options:0 range:NSMakeRange(0, runs.length)];
     for (NSTextCheckingResult *m in matches) if (m.numberOfRanges >= 2) [out appendString:[self ytdf_unescape:[runs substringWithRange:[m rangeAtIndex:1]]]];
     return [self ytdf_norm:out];
@@ -212,6 +240,7 @@ static BOOL YTNicoDirectFetchActive = NO;
     if (![s isKindOfClass:NSString.class]) return @"";
     s = [s stringByReplacingOccurrencesOfString:@"\\n" withString:@" "];
     s = [s stringByReplacingOccurrencesOfString:@"\\\"" withString:@"\""];
+    s = [s stringByReplacingOccurrencesOfString:@"\\/" withString:@"/"];
     s = [s stringByReplacingOccurrencesOfString:@"\\u0026" withString:@"&"];
     s = [s stringByReplacingOccurrencesOfString:@"\\u003c" withString:@"<"];
     s = [s stringByReplacingOccurrencesOfString:@"\\u003e" withString:@">"];
