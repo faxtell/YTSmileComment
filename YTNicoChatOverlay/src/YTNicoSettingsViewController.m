@@ -77,8 +77,15 @@
     [self addSwitch:@"アウトライン" subtitle:@"文字に縁取りを付けます" value:s.enableOutline action:^(BOOL v){ [s setEnableOutline:v]; }];
     [self addSwitch:@"テストコメント" subtitle:@"動作確認用コメントを自動で流します" value:s.mockMode action:^(BOOL v){ [s setMockMode:v]; }];
 
-    [self addButton:@"表示テストコメントを流す" action:^{ if (self.displayTestHandler) self.displayTestHandler(); }];
-    [self addButton:@"クリップボードの動画URL/IDから取得" action:^{ if (self.clipboardFetchHandler) self.clipboardFetchHandler(); }];
+    __weak typeof(self) weakSelf = self;
+    [self addButton:@"表示テストコメントを流す" action:^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf.displayTestHandler) strongSelf.displayTestHandler();
+    }];
+    [self addButton:@"クリップボードの動画URL/IDから取得" action:^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf.clipboardFetchHandler) strongSelf.clipboardFetchHandler();
+    }];
 }
 
 - (void)addSwitch:(NSString *)title subtitle:(NSString *)subtitle value:(BOOL)value action:(void (^)(BOOL))action {
