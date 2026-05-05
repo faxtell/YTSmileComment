@@ -3,6 +3,7 @@
 #import "SettingsManager.h"
 #import "DebugInspector.h"
 #import <QuartzCore/QuartzCore.h>
+#import <math.h>
 
 NSString * const kYTNicoClearOverlayNotification = @"com.example.ytnico.clearOverlay";
 NSString * const kYTNicoCurrentVideoChangedNotification = @"com.example.ytnico.videoChanged";
