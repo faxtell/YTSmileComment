@@ -20,6 +20,8 @@ FOUNDATION_EXTERN NSString * const kYTNicoCurrentVideoChangedNotification;
 + (void)queueTimedReplayAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId offsetMilliseconds:(unsigned long long)offsetMilliseconds generation:(NSUInteger)generation;
 + (void)updateCurrentPlaybackSeconds:(double)seconds;
 + (double)currentPlaybackSeconds;
++ (void)noteDetectedVideoId:(NSString *)videoId source:(NSString *)source;
++ (NSString *)recentDetectedVideoId;
 + (void)resetForVideoId:(NSString *)videoId;
 + (void)forceResetForVideoId:(NSString *)videoId;
 + (void)clearCurrentVideoAndComments;
