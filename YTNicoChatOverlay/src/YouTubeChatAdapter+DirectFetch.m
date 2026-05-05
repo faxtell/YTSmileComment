@@ -2,8 +2,8 @@
 #import "DebugInspector.h"
 
 static BOOL YTNicoDirectFetchActive = NO;
-static const NSInteger YTNicoMaxCommentPages = 4;
-static const NSInteger YTNicoMaxChatPages = 4;
+static const NSInteger YTNicoMaxCommentPages = 8;
+static const NSInteger YTNicoMaxChatPages = 10;
 
 @implementation YouTubeChatAdapter (DirectFetch)
 
@@ -89,12 +89,12 @@ static const NSInteger YTNicoMaxChatPages = 4;
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
     [self ytdf_postURL:url body:body completion:^(NSString *text) {
-        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:50 preferLive:NO] : 0;
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:70 preferLive:NO] : 0;
         NSString *nextToken = text.length > 0 ? [self ytdf_firstCommentContinuationTokenInString:text] : @"";
         if (nextToken.length > 0 && page < YTNicoMaxCommentPages) {
             [self ytdf_fetchCommentContinuationWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted];
         } else {
-            if (totalEmitted + emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUIDString];
+            if (totalEmitted + emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
             [self ytdf_finish];
         }
     }];
@@ -102,7 +102,7 @@ static const NSInteger YTNicoMaxChatPages = 4;
 
 + (void)ytdf_fetchLiveReplayWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted {
     if (page > YTNicoMaxChatPages || token.length == 0) {
-        if (totalEmitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUIDString];
+        if (totalEmitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
         [self ytdf_finish];
         return;
     }
@@ -110,12 +110,12 @@ static const NSInteger YTNicoMaxChatPages = 4;
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
     [self ytdf_postURL:url body:body completion:^(NSString *text) {
-        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:60 preferLive:YES] : 0;
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:90 preferLive:YES] : 0;
         NSString *nextToken = text.length > 0 ? [self ytdf_firstLiveContinuationTokenInString:text] : @"";
         if (nextToken.length > 0 && page < YTNicoMaxChatPages) {
             [self ytdf_fetchLiveReplayWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted];
         } else {
-            if (totalEmitted + emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUIDString];
+            if (totalEmitted + emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
             [self ytdf_finish];
         }
     }];
@@ -154,10 +154,8 @@ static const NSInteger YTNicoMaxChatPages = 4;
         if (text.length == 0) return;
         if (author.length == 0) author = preferLive ? @"chat" : @"comment";
         NSString *key = [NSString stringWithFormat:@"%@|%@", author, text];
-        if ([seen containsObject:key]) return;
-        [seen addObject:key];
         NSString *mid = [NSString stringWithFormat:@"direct-%lu", (unsigned long)key.hash];
-        [YouTubeChatAdapter broadcastAuthor:author text:text messageId:mid];
+        if (count < maxCount) [YouTubeChatAdapter broadcastAuthor:author text:text messageId:mid];
         count++;
     };
 
@@ -167,7 +165,7 @@ static const NSInteger YTNicoMaxChatPages = 4;
 
     for (NSString *key in rendererKeys) {
         if (count >= maxCount) break;
-        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:120]) {
+        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:180]) {
             if (count >= maxCount) break;
             NSString *author = [self ytdf_firstMatchIn:block patterns:@[
                 @"\"authorText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"",
@@ -209,7 +207,7 @@ static const NSInteger YTNicoMaxChatPages = 4;
         NSRange braceSearch = NSMakeRange(NSMaxRange(r), s.length - NSMaxRange(r));
         NSRange br = [s rangeOfString:@"{" options:0 range:braceSearch];
         if (br.location == NSNotFound) break;
-        NSString *block = [self ytdf_balancedObjectFromString:s start:br.location maxLength:26000];
+        NSString *block = [self ytdf_balancedObjectFromString:s start:br.location maxLength:30000];
         if (block.length > 0) [blocks addObject:block];
         NSUInteger next = br.location + MAX((NSUInteger)1, block.length);
         if (next >= s.length) break;
