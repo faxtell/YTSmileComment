@@ -11,6 +11,7 @@ static const void *kOverlayKey = &kOverlayKey;
 static const void *kAdapterKey = &kAdapterKey;
 static const void *kButtonKey = &kButtonKey;
 static const void *kCtlKey = &kCtlKey;
+static const void *kToastKey = &kToastKey;
 
 @interface YTNicoController : NSObject <YouTubeChatAdapterDelegate>
 @property (nonatomic, weak) UIWindow *window;
@@ -40,6 +41,84 @@ static const void *kCtlKey = &kCtlKey;
     YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
     [adapter stopObserving];
     [self setup];
+}
+
+#pragma mark - System toast
+
+- (BOOL)isSystemMessage:(NicoChatMessage *)message {
+    if (!message) return NO;
+    NSString *author = message.authorName ?: @"";
+    if ([author isEqualToString:@"YTNico"]) return YES;
+    NSString *mid = message.messageId ?: @"";
+    return [mid hasPrefix:@"ytnico-system-"] || [mid hasPrefix:@"system-"];
+}
+
+- (void)showSystemToast:(NSString *)text {
+    if (text.length == 0 || !self.window) return;
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self showSystemToast:text]; });
+        return;
+    }
+
+    UIView *toast = objc_getAssociatedObject(self, kToastKey);
+    UILabel *label = nil;
+    if (!toast) {
+        toast = [[UIView alloc] initWithFrame:CGRectZero];
+        toast.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.42];
+        toast.layer.cornerRadius = 14.0;
+        toast.layer.masksToBounds = YES;
+        toast.layer.zPosition = 20000;
+        toast.userInteractionEnabled = NO;
+        toast.alpha = 0.0;
+
+        label = [[UILabel alloc] initWithFrame:CGRectZero];
+        label.tag = 8301;
+        label.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.92];
+        label.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightMedium];
+        label.numberOfLines = 2;
+        label.textAlignment = NSTextAlignmentCenter;
+        [toast addSubview:label];
+
+        objc_setAssociatedObject(self, kToastKey, toast, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else {
+        label = [toast viewWithTag:8301];
+    }
+
+    if (toast.superview != self.window) {
+        [toast removeFromSuperview];
+        [self.window addSubview:toast];
+    }
+
+    label.text = text;
+    CGFloat safeBottom = 0.0;
+    CGFloat safeTop = 0.0;
+    if (@available(iOS 11.0, *)) {
+        safeBottom = self.window.safeAreaInsets.bottom;
+        safeTop = self.window.safeAreaInsets.top;
+    }
+    CGRect bounds = self.window.bounds;
+    CGFloat maxWidth = MIN(bounds.size.width - 32.0, 420.0);
+    CGSize fit = [label sizeThatFits:CGSizeMake(maxWidth - 28.0, 44.0)];
+    CGFloat width = MIN(maxWidth, MAX(180.0, fit.width + 28.0));
+    CGFloat height = MIN(54.0, MAX(34.0, fit.height + 14.0));
+    CGFloat y = bounds.size.height - safeBottom - height - 26.0;
+    if (y < safeTop + 44.0) y = bounds.size.height - height - 18.0;
+    toast.frame = CGRectMake((bounds.size.width - width) / 2.0, y, width, height);
+    label.frame = CGRectInset(toast.bounds, 14.0, 7.0);
+
+    [self.window bringSubviewToFront:toast];
+    [toast.layer removeAllAnimations];
+    toast.alpha = 0.0;
+    toast.transform = CGAffineTransformMakeTranslation(0, 8.0);
+    [UIView animateWithDuration:0.18 animations:^{
+        toast.alpha = 1.0;
+        toast.transform = CGAffineTransformIdentity;
+    } completion:^(__unused BOOL finished) {
+        [UIView animateWithDuration:0.35 delay:2.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+            toast.alpha = 0.0;
+            toast.transform = CGAffineTransformMakeTranslation(0, 8.0);
+        } completion:nil];
+    }];
 }
 
 - (void)clearAllOverlaysInView:(UIView *)view {
@@ -305,11 +384,7 @@ static const void *kCtlKey = &kCtlKey;
     }
     [self ensureOverlayAttached];
     [YouTubeChatAdapter resetForVideoId:videoId];
-    NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    if (overlay.superview) {
-        NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
-        [overlay enqueueMessage:msg];
-    }
+    [self showSystemToast:[NSString stringWithFormat:@"コメント取得開始: %@", videoId]];
     [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
 }
 
@@ -327,6 +402,10 @@ static const void *kCtlKey = &kCtlKey;
 
 - (void)chatAdapterDidReceiveMessage:(NicoChatMessage *)message {
     if (!message || message.text.length == 0 || ![SettingsManager shared].enabled) return;
+    if ([self isSystemMessage:message]) {
+        [self showSystemToast:message.text];
+        return;
+    }
     [self ensureOverlayAttached];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
     if (!overlay || !overlay.superview) return;
