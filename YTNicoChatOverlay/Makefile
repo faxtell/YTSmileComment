@@ -10,6 +10,7 @@ TWEAK_NAME = YTNicoChatOverlay
 
 YTNicoChatOverlay_FILES = \
 	src/Tweak.xm \
+	src/NetworkHooks.xm \
 	src/NicoChatOverlayView.m \
 	src/NicoCommentLayer.m \
 	src/NicoChatMessage.m \
