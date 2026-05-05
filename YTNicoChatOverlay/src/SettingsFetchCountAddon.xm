@@ -63,6 +63,23 @@ static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
     progress.progress = (slider.value - 100.0f) / 2900.0f;
     [slider addTarget:self action:@selector(ytnico_fetchCountSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [stack insertArrangedSubview:card atIndex:MIN((NSUInteger)4, stack.arrangedSubviews.count)];
+
+    UILabel *developer = [UILabel new];
+    developer.text = @"開発者: 🦈";
+    developer.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    developer.textColor = UIColor.secondaryLabelColor;
+    developer.textAlignment = NSTextAlignmentCenter;
+    developer.numberOfLines = 1;
+    [stack addArrangedSubview:developer];
+
+    UIButton *credit = [UIButton buttonWithType:UIButtonTypeSystem];
+    [credit setTitle:@"クレジット" forState:UIControlStateNormal];
+    credit.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    credit.backgroundColor = UIColor.tertiarySystemBackgroundColor;
+    credit.layer.cornerRadius = 14.0;
+    credit.contentEdgeInsets = UIEdgeInsetsMake(12, 14, 12, 14);
+    [credit addTarget:self action:@selector(ytnico_openCreditLink) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:credit];
 }
 
 %new
@@ -72,5 +89,17 @@ static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
     [SettingsManager.shared setMaxFetchComments:(NSInteger)roundf(slider.value)];
     value.text = [NSString stringWithFormat:@"%.0f 件", slider.value];
     progress.progress = (slider.value - 100.0f) / 2900.0f;
+}
+
+%new
+- (void)ytnico_openCreditLink {
+    NSURL *url = [NSURL URLWithString:@"https://x.com/sa_me_kun"];
+    if (!url) return;
+    UIApplication *app = UIApplication.sharedApplication;
+    if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+        [app openURL:url options:@{} completionHandler:nil];
+    } else {
+        [app openURL:url];
+    }
 }
 %end
