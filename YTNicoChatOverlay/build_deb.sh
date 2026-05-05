@@ -47,8 +47,17 @@ prepare_packager() {
 prepare_packager
 
 echo "[INFO] THEOS=${THEOS}"
-make clean _THEOS_PLATFORM_DPKG_DEB="${PACKAGER}"
-make package FINALPACKAGE=1 _THEOS_PLATFORM_DPKG_DEB="${PACKAGER}"
+
+# Newer dpkg-deb rejects Theos' historical default compression type `lzma`.
+# Force xz in every make invocation so Theos passes `-Zxz` instead of `-Zlzma`.
+COMMON_PACKAGE_ARGS=(
+  _THEOS_PLATFORM_DPKG_DEB="${PACKAGER}"
+  _THEOS_PLATFORM_DPKG_DEB_COMPRESSION=xz
+  THEOS_PLATFORM_DEB_COMPRESSION_TYPE=xz
+)
+
+make clean "${COMMON_PACKAGE_ARGS[@]}"
+make package FINALPACKAGE=1 "${COMMON_PACKAGE_ARGS[@]}"
 
 # Depending on the Theos version/configuration, packages may be written to
 # ./packages or ./.theos/packages. Prefer the normal ./packages directory but
