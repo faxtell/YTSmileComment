@@ -5,6 +5,9 @@
 
 static NSHashTable<YouTubeChatAdapter *> *gAdapters;
 static dispatch_queue_t gParseQueue;
+static NSMutableArray<NSDictionary *> *gPendingMessages;
+static NSMutableSet<NSString *> *gPendingIds;
+static NSTimer *gDrainTimer;
 
 @interface YouTubeChatAdapter ()
 @property (nonatomic, weak) UIView *root;
@@ -18,11 +21,13 @@ static dispatch_queue_t gParseQueue;
     if (self == YouTubeChatAdapter.class) {
         gAdapters = [NSHashTable weakObjectsHashTable];
         gParseQueue = dispatch_queue_create("com.example.ytnico.parse", DISPATCH_QUEUE_SERIAL);
+        gPendingMessages = [NSMutableArray array];
+        gPendingIds = [NSMutableSet set];
     }
 }
 
 - (instancetype)init {
-    if ((self = [super init])) _cache = [[NicoMessageLRUCache alloc] initWithCapacity:4000];
+    if ((self = [super init])) _cache = [[NicoMessageLRUCache alloc] initWithCapacity:6000];
     return self;
 }
 
@@ -30,6 +35,7 @@ static dispatch_queue_t gParseQueue;
     self.root = rootView;
     @synchronized (gAdapters) { [gAdapters addObject:self]; }
     [self refreshMockTimer];
+    [YouTubeChatAdapter ytnico_ensureDrainTimer];
 }
 
 - (void)stopObserving {
@@ -44,7 +50,40 @@ static dispatch_queue_t gParseQueue;
     if (!wantsMock && self.mockTimer) { [self.mockTimer invalidate]; self.mockTimer = nil; }
 }
 
+#pragma mark - Adaptive pacing buffer
+
 + (void)broadcastAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
+    author = [self norm:author];
+    text = [self norm:text];
+    messageId = [self norm:messageId];
+    if (text.length == 0) return;
+    if (messageId.length == 0) messageId = [NSString stringWithFormat:@"direct-%lu", (unsigned long)[[NSString stringWithFormat:@"%@|%@", author, text] hash]];
+
+    // Status messages should appear immediately. Real comments are paced.
+    if ([author isEqualToString:@"YTNico"]) {
+        [self ytnico_emitAuthorNow:author text:text messageId:messageId];
+        return;
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized (gPendingMessages) {
+            if ([gPendingIds containsObject:messageId]) return;
+            [gPendingIds addObject:messageId];
+            [gPendingMessages addObject:@{@"a":author ?: @"", @"t":text, @"i":messageId}];
+            if (gPendingMessages.count > 1200) {
+                NSUInteger removeCount = MIN((NSUInteger)200, gPendingMessages.count);
+                for (NSUInteger i = 0; i < removeCount; i++) {
+                    NSDictionary *old = gPendingMessages.firstObject;
+                    if (old[@"i"]) [gPendingIds removeObject:old[@"i"]];
+                    [gPendingMessages removeObjectAtIndex:0];
+                }
+            }
+        }
+        [self ytnico_ensureDrainTimer];
+    });
+}
+
++ (void)ytnico_emitAuthorNow:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSArray *adapters = nil;
         @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
@@ -53,6 +92,64 @@ static dispatch_queue_t gParseQueue;
         }
     });
 }
+
++ (NSTimeInterval)ytnico_intervalForPendingCount:(NSUInteger)count {
+    if (count >= 500) return 0.75;
+    if (count >= 250) return 1.05;
+    if (count >= 120) return 1.35;
+    if (count >= 60) return 1.9;
+    if (count >= 25) return 2.8;
+    if (count >= 8) return 4.0;
+    return 6.0;
+}
+
++ (void)ytnico_ensureDrainTimer {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (gDrainTimer && gDrainTimer.valid) return;
+        gDrainTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(ytnico_drainTick) userInfo:nil repeats:NO];
+    });
+}
+
++ (void)ytnico_scheduleNextDrain {
+    @synchronized (gPendingMessages) {
+        if (gPendingMessages.count == 0) {
+            [gDrainTimer invalidate];
+            gDrainTimer = nil;
+            return;
+        }
+    }
+    NSTimeInterval interval = 3.0;
+    @synchronized (gPendingMessages) { interval = [self ytnico_intervalForPendingCount:gPendingMessages.count]; }
+    [gDrainTimer invalidate];
+    gDrainTimer = [NSTimer scheduledTimerWithTimeInterval:interval target:self selector:@selector(ytnico_drainTick) userInfo:nil repeats:NO];
+}
+
++ (void)ytnico_drainTick {
+    NSMutableArray<NSDictionary *> *batch = [NSMutableArray array];
+    @synchronized (gPendingMessages) {
+        NSUInteger count = gPendingMessages.count;
+        NSUInteger burst = 1;
+        if (count >= 500) burst = 3;
+        else if (count >= 180) burst = 2;
+        for (NSUInteger i = 0; i < burst && gPendingMessages.count > 0; i++) {
+            NSDictionary *m = gPendingMessages.firstObject;
+            [batch addObject:m];
+            if (m[@"i"]) [gPendingIds removeObject:m[@"i"]];
+            [gPendingMessages removeObjectAtIndex:0];
+        }
+    }
+
+    for (NSDictionary *m in batch) {
+        [self ytnico_emitAuthorNow:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
+    }
+    [self ytnico_scheduleNextDrain];
+}
+
++ (NSUInteger)pendingMessageCount {
+    @synchronized (gPendingMessages) { return gPendingMessages.count; }
+}
+
+#pragma mark - Legacy JSON parser entrypoints
 
 + (void)ingestPotentialInnertubeData:(NSData *)data request:(NSURLRequest *)request {
     if (![data isKindOfClass:NSData.class] || data.length == 0 || data.length > 20000000) return;
@@ -68,15 +165,9 @@ static dispatch_queue_t gParseQueue;
         NSMutableArray<NSDictionary *> *messages = [NSMutableArray array];
         [self collect:object into:messages depth:0];
         if (messages.count == 0) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NSArray *adapters = nil;
-            @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
-            for (NSDictionary *m in messages) {
-                for (YouTubeChatAdapter *adapter in adapters) {
-                    [adapter emitAuthor:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
-                }
-            }
-        });
+        for (NSDictionary *m in messages) {
+            [self broadcastAuthor:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
+        }
     });
 }
 
