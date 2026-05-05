@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <math.h>
 #import "YTNicoSettingsViewController.h"
 #import "SettingsManager.h"
 
