@@ -20,6 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (CGFloat)longevity;
 - (BOOL)syncReplayToTimestamp;
 - (BOOL)preferLiveChat;
+- (BOOL)autoFetch;
 
 - (void)setEnabled:(BOOL)value;
 - (void)setFontSize:(CGFloat)value;
@@ -36,6 +37,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setLongevity:(CGFloat)value;
 - (void)setSyncReplayToTimestamp:(BOOL)value;
 - (void)setPreferLiveChat:(BOOL)value;
+- (void)setAutoFetch:(BOOL)value;
 - (void)reload;
 @end
 
