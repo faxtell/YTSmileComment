@@ -10,4 +10,5 @@
 @property (nonatomic, weak) id<YouTubeChatAdapterDelegate> delegate;
 - (void)startObservingInRootView:(UIView *)rootView;
 - (void)stopObserving;
++ (void)ingestPotentialInnertubeData:(NSData *)data request:(NSURLRequest *)request;
 @end
