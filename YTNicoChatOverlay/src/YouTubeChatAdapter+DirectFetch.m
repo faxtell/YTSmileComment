@@ -2,6 +2,8 @@
 #import "DebugInspector.h"
 
 static BOOL YTNicoDirectFetchActive = NO;
+static const NSInteger YTNicoMaxCommentPages = 4;
+static const NSInteger YTNicoMaxChatPages = 4;
 
 @implementation YouTubeChatAdapter (DirectFetch)
 
@@ -51,25 +53,69 @@ static BOOL YTNicoDirectFetchActive = NO;
     if (clientVersion.length == 0) clientVersion = @"2.20250101.01.00";
     if (apiKey.length == 0) { [self ytdf_finish]; return; }
 
-    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
-    NSDictionary *body = @{@"context":@{@"client":@{@"clientName":@"WEB", @"clientVersion":clientVersion, @"hl":@"ja", @"gl":@"JP"}}, @"videoId":videoId};
-    [self ytdf_postURL:url body:body completion:^(NSString *text) {
-        NSInteger emitted = 0;
-        if (text.length > 0) emitted = [self ytdf_parseResponseString:text maxCount:40];
-        if (emitted == 0) {
-            NSString *token = [self ytdf_firstContinuationTokenInString:text];
-            if (token.length > 0) {
-                NSDictionary *nextBody = @{@"context":@{@"client":@{@"clientName":@"WEB", @"clientVersion":clientVersion, @"hl":@"ja", @"gl":@"JP"}}, @"continuation":token};
-                [self ytdf_postURL:url body:nextBody completion:^(NSString *text2) {
-                    NSInteger emitted2 = text2.length > 0 ? [self ytdf_parseResponseString:text2 maxCount:40] : 0;
-                    if (emitted2 == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
-                    [self ytdf_finish];
-                }];
-            } else {
-                [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
-                [self ytdf_finish];
-            }
+    NSURL *nextURL = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
+    NSDictionary *body = @{@"context":[self ytdf_context:clientVersion], @"videoId":videoId};
+    [self ytdf_postURL:nextURL body:body completion:^(NSString *text) {
+        if (text.length == 0) { [self ytdf_finish]; return; }
+
+        NSString *liveToken = [self ytdf_firstLiveContinuationTokenInString:text];
+        if (liveToken.length > 0) {
+            [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"チャットリプレイを優先して取得します" messageId:NSUUID.UUID.UUIDString];
+            [self ytdf_fetchLiveReplayWithKey:apiKey version:clientVersion token:liveToken page:0 totalEmitted:0];
+            return;
+        }
+
+        NSInteger emitted = [self ytdf_parseResponseString:text maxCount:50 preferLive:NO];
+        NSString *token = [self ytdf_firstCommentContinuationTokenInString:text];
+        if (token.length > 0) {
+            [self ytdf_fetchCommentContinuationWithKey:apiKey version:clientVersion token:token page:1 totalEmitted:emitted];
         } else {
+            if (emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+            [self ytdf_finish];
+        }
+    }];
+}
+
++ (NSDictionary *)ytdf_context:(NSString *)clientVersion {
+    return @{@"client":@{@"clientName":@"WEB", @"clientVersion":clientVersion ?: @"2.20250101.01.00", @"hl":@"ja", @"gl":@"JP"}};
+}
+
++ (void)ytdf_fetchCommentContinuationWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted {
+    if (page > YTNicoMaxCommentPages || token.length == 0) {
+        if (totalEmitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+        [self ytdf_finish];
+        return;
+    }
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
+    NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
+    [self ytdf_postURL:url body:body completion:^(NSString *text) {
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:50 preferLive:NO] : 0;
+        NSString *nextToken = text.length > 0 ? [self ytdf_firstCommentContinuationTokenInString:text] : @"";
+        if (nextToken.length > 0 && page < YTNicoMaxCommentPages) {
+            [self ytdf_fetchCommentContinuationWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted];
+        } else {
+            if (totalEmitted + emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUIDString];
+            [self ytdf_finish];
+        }
+    }];
+}
+
++ (void)ytdf_fetchLiveReplayWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted {
+    if (page > YTNicoMaxChatPages || token.length == 0) {
+        if (totalEmitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUIDString];
+        [self ytdf_finish];
+        return;
+    }
+
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=%@", apiKey]];
+    NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
+    [self ytdf_postURL:url body:body completion:^(NSString *text) {
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:60 preferLive:YES] : 0;
+        NSString *nextToken = text.length > 0 ? [self ytdf_firstLiveContinuationTokenInString:text] : @"";
+        if (nextToken.length > 0 && page < YTNicoMaxChatPages) {
+            [self ytdf_fetchLiveReplayWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted];
+        } else {
+            if (totalEmitted + emitted == 0) [YouTubeChatAdapter broadcastAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUIDString];
             [self ytdf_finish];
         }
     }];
@@ -96,7 +142,7 @@ static BOOL YTNicoDirectFetchActive = NO;
     [task resume];
 }
 
-+ (NSInteger)ytdf_parseResponseString:(NSString *)s maxCount:(NSInteger)maxCount {
++ (NSInteger)ytdf_parseResponseString:(NSString *)s maxCount:(NSInteger)maxCount preferLive:(BOOL)preferLive {
     if (s.length == 0) return 0;
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
     __block NSInteger count = 0;
@@ -106,7 +152,7 @@ static BOOL YTNicoDirectFetchActive = NO;
         author = [self ytdf_norm:[self ytdf_unescape:author]];
         text = [self ytdf_norm:[self ytdf_unescape:text]];
         if (text.length == 0) return;
-        if (author.length == 0) author = @"comment";
+        if (author.length == 0) author = preferLive ? @"chat" : @"comment";
         NSString *key = [NSString stringWithFormat:@"%@|%@", author, text];
         if ([seen containsObject:key]) return;
         [seen addObject:key];
@@ -115,19 +161,13 @@ static BOOL YTNicoDirectFetchActive = NO;
         count++;
     };
 
-    NSRegularExpression *classic = [NSRegularExpression regularExpressionWithPattern:@"\"authorText\"\\s*:\\s*\\{\\s*\"simpleText\"\\s*:\\s*\"([^\"]+)\".*?\"contentText\"\\s*:\\s*\\{\\s*\"runs\"\\s*:\\s*\\[(.*?)\\]" options:NSRegularExpressionDotMatchesLineSeparators error:nil];
-    for (NSTextCheckingResult *m in [classic matchesInString:s options:0 range:NSMakeRange(0, s.length)]) {
-        if (count >= maxCount) break;
-        if (m.numberOfRanges < 3) continue;
-        NSString *author = [s substringWithRange:[m rangeAtIndex:1]];
-        NSString *text = [self ytdf_textFromRunsString:[s substringWithRange:[m rangeAtIndex:2]]];
-        emit(author, text);
-    }
+    NSArray<NSString *> *rendererKeys = preferLive ?
+        @[@"liveChatTextMessageRenderer", @"liveChatPaidMessageRenderer", @"liveChatMembershipItemRenderer", @"liveChatPaidStickerRenderer"] :
+        @[@"commentRenderer", @"commentViewModel", @"commentEntityPayload", @"liveChatTextMessageRenderer", @"liveChatPaidMessageRenderer", @"liveChatMembershipItemRenderer"];
 
-    NSArray<NSString *> *rendererKeys = @[@"commentRenderer", @"commentViewModel", @"commentEntityPayload", @"liveChatTextMessageRenderer", @"liveChatPaidMessageRenderer", @"liveChatMembershipItemRenderer"];
     for (NSString *key in rendererKeys) {
         if (count >= maxCount) break;
-        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:80]) {
+        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:120]) {
             if (count >= maxCount) break;
             NSString *author = [self ytdf_firstMatchIn:block patterns:@[
                 @"\"authorText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"",
@@ -155,8 +195,7 @@ static BOOL YTNicoDirectFetchActive = NO;
             emit(author, text);
         }
     }
-
-    [[DebugInspector shared] log:@"direct string parser emitted %ld", (long)count];
+    [[DebugInspector shared] log:@"direct parser emitted %ld live=%d", (long)count, preferLive];
     return count;
 }
 
@@ -170,7 +209,7 @@ static BOOL YTNicoDirectFetchActive = NO;
         NSRange braceSearch = NSMakeRange(NSMaxRange(r), s.length - NSMaxRange(r));
         NSRange br = [s rangeOfString:@"{" options:0 range:braceSearch];
         if (br.location == NSNotFound) break;
-        NSString *block = [self ytdf_balancedObjectFromString:s start:br.location maxLength:22000];
+        NSString *block = [self ytdf_balancedObjectFromString:s start:br.location maxLength:26000];
         if (block.length > 0) [blocks addObject:block];
         NSUInteger next = br.location + MAX((NSUInteger)1, block.length);
         if (next >= s.length) break;
@@ -179,12 +218,40 @@ static BOOL YTNicoDirectFetchActive = NO;
     return blocks;
 }
 
-+ (NSString *)ytdf_firstContinuationTokenInString:(NSString *)s {
++ (NSString *)ytdf_firstLiveContinuationTokenInString:(NSString *)s {
     if (s.length == 0) return @"";
+    for (NSString *key in @[@"liveChatRenderer", @"liveChatItemListRenderer", @"liveChatContinuation", @"liveChatHeaderRenderer"]) {
+        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:8]) {
+            NSString *token = [self ytdf_firstMatchIn:block patterns:@[
+                @"\"continuation\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"token\"\\s*:\\s*\"([^\"]+)\""
+            ]];
+            if (token.length > 0) return token;
+        }
+    }
+    NSArray<NSString *> *patterns = @[
+        @"\"liveChat.*?\"continuation\"\\s*:\\s*\"([^\"]+)\"",
+        @"\"timedContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\"",
+        @"\"reloadContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\""
+    ];
+    return [self ytdf_firstMatchIn:s patterns:patterns];
+}
+
++ (NSString *)ytdf_firstCommentContinuationTokenInString:(NSString *)s {
+    if (s.length == 0) return @"";
+    for (NSString *key in @[@"commentSectionRenderer", @"itemSectionRenderer", @"continuationItemRenderer"]) {
+        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:16]) {
+            NSString *token = [self ytdf_firstMatchIn:block patterns:@[
+                @"\"continuationCommand\".*?\"token\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"token\"\\s*:\\s*\"([^\"]+)\"",
+                @"\"continuation\"\\s*:\\s*\"([^\"]+)\""
+            ]];
+            if (token.length > 0) return token;
+        }
+    }
     NSArray<NSString *> *patterns = @[
         @"\"continuationCommand\".*?\"token\"\\s*:\\s*\"([^\"]+)\"",
-        @"\"nextContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\"",
-        @"\"reloadContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\""
+        @"\"nextContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\""
     ];
     return [self ytdf_firstMatchIn:s patterns:patterns];
 }
