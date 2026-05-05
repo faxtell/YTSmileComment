@@ -70,6 +70,11 @@ static const void *kCtlKey = &kCtlKey;
     }
 
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
+    if (player == overlay || [player isKindOfClass:NicoChatOverlayView.class] || [player isKindOfClass:UIControl.class] || [player isKindOfClass:UIWindow.class]) {
+        [[DebugInspector shared] log:@"Rejected unsafe player candidate %@", NSStringFromClass(player.class)];
+        return;
+    }
+
     if (!overlay) {
         overlay = [[NicoChatOverlayView alloc] initWithFrame:player.bounds];
         overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -82,6 +87,7 @@ static const void *kCtlKey = &kCtlKey;
     }
 
     if (overlay.superview != player) {
+        if (player == overlay || [player isDescendantOfView:overlay]) return;
         [overlay removeFromSuperview];
         overlay.frame = player.bounds;
         [player addSubview:overlay];
@@ -110,22 +116,39 @@ static const void *kCtlKey = &kCtlKey;
     return bestView;
 }
 
+- (BOOL)shouldSkipPlayerCandidateView:(UIView *)view {
+    if (!view) return YES;
+    if ([view isKindOfClass:NicoChatOverlayView.class]) return YES;
+    if ([view isKindOfClass:UIControl.class]) return YES;
+    if ([view isKindOfClass:UIWindow.class]) return YES;
+    NSString *className = NSStringFromClass(view.class).lowercaseString;
+    if ([className containsString:@"overlay"]) return YES;
+    if ([className containsString:@"button"]) return YES;
+    if ([className containsString:@"comment"]) return YES;
+    if ([className containsString:@"chat"]) return YES;
+    if ([className containsString:@"caption"]) return YES;
+    if ([className containsString:@"subtitle"]) return YES;
+    return NO;
+}
+
 - (void)collectPlayerCandidatesFromView:(UIView *)view into:(NSMutableArray<UIView *> *)candidates {
     if (!view || view.hidden || view.alpha < 0.05) return;
     if (view.bounds.size.width < 120 || view.bounds.size.height < 70) return;
 
-    CGRect rect = [view convertRect:view.bounds toView:nil];
-    if (!CGRectIsEmpty(rect) && !CGRectIsInfinite(rect)) {
-        CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
-        CGFloat screenW = UIScreen.mainScreen.bounds.size.width;
-        CGFloat screenH = UIScreen.mainScreen.bounds.size.height;
-        BOOL portraitLikePlayer = (ratio > 1.45 && ratio < 2.05 &&
-                                   rect.size.width >= screenW * 0.70 &&
-                                   rect.origin.y <= screenH * 0.50);
-        BOOL fullscreenLandscapePlayer = (ratio > 1.35 && ratio < 2.35 &&
-                                          rect.size.width >= screenW * 0.85 &&
-                                          rect.size.height >= screenH * 0.45);
-        if (portraitLikePlayer || fullscreenLandscapePlayer) [candidates addObject:view];
+    if (![self shouldSkipPlayerCandidateView:view]) {
+        CGRect rect = [view convertRect:view.bounds toView:nil];
+        if (!CGRectIsEmpty(rect) && !CGRectIsInfinite(rect)) {
+            CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
+            CGFloat screenW = UIScreen.mainScreen.bounds.size.width;
+            CGFloat screenH = UIScreen.mainScreen.bounds.size.height;
+            BOOL portraitLikePlayer = (ratio > 1.45 && ratio < 2.05 &&
+                                       rect.size.width >= screenW * 0.70 &&
+                                       rect.origin.y <= screenH * 0.50);
+            BOOL fullscreenLandscapePlayer = (ratio > 1.35 && ratio < 2.35 &&
+                                              rect.size.width >= screenW * 0.85 &&
+                                              rect.size.height >= screenH * 0.45);
+            if (portraitLikePlayer || fullscreenLandscapePlayer) [candidates addObject:view];
+        }
     }
 
     for (UIView *subview in view.subviews) [self collectPlayerCandidatesFromView:subview into:candidates];
