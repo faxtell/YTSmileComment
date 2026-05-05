@@ -199,8 +199,8 @@ static CFTimeInterval gPlaybackUpdateWallTime;
                 if (o1 == o2) return NSOrderedSame;
                 return o1 < o2 ? NSOrderedAscending : NSOrderedDescending;
             }];
-            if (gTimedReplayMessages.count > 2500) {
-                NSUInteger removeCount = MIN((NSUInteger)400, gTimedReplayMessages.count);
+            if (gTimedReplayMessages.count > 4000) {
+                NSUInteger removeCount = MIN((NSUInteger)500, gTimedReplayMessages.count);
                 for (NSUInteger i = 0; i < removeCount; i++) {
                     NSDictionary *old = gTimedReplayMessages.firstObject;
                     if (old[@"i"]) [gTimedReplayIds removeObject:old[@"i"]];
@@ -214,7 +214,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 
 + (void)ytnico_ensureReplayTimer {
     if (gReplayTimer && gReplayTimer.valid) return;
-    gReplayTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(ytnico_replayTick) userInfo:nil repeats:YES];
+    gReplayTimer = [NSTimer scheduledTimerWithTimeInterval:0.18 target:self selector:@selector(ytnico_replayTick) userInfo:nil repeats:YES];
 }
 
 + (void)ytnico_replayTick {
@@ -222,8 +222,8 @@ static CFTimeInterval gPlaybackUpdateWallTime;
     double playback = [self currentPlaybackSeconds];
     if (playback < 0) return;
     unsigned long long nowMs = (unsigned long long)MAX(0.0, playback * 1000.0);
-    unsigned long long toleranceMs = 850;
-    unsigned long long lateDropMs = 45000;
+    unsigned long long toleranceMs = 1800;
+    unsigned long long lateDropMs = 60000;
 
     NSMutableArray<NSDictionary *> *emitBatch = [NSMutableArray array];
     @synchronized (gTimedReplayMessages) {
@@ -239,7 +239,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
                 if (m[@"i"]) [gTimedReplayIds removeObject:m[@"i"]];
                 continue;
             }
-            if (offset <= nowMs + toleranceMs && emitted < 8) {
+            if (offset <= nowMs + toleranceMs && emitted < 14) {
                 [emitBatch addObject:m];
                 if (m[@"i"]) [gTimedReplayIds removeObject:m[@"i"]];
                 emitted++;
@@ -303,6 +303,16 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 + (NSTimeInterval)ytnico_intervalForPendingCount:(NSUInteger)count {
     SettingsManager *s = SettingsManager.shared;
     CGFloat density = MAX(0.1, MIN(1.0, s.commentDensity));
+    if (s.niconicoMode) {
+        NSTimeInterval base = 1.10;
+        if (count >= 300) base = 0.22;
+        else if (count >= 120) base = 0.30;
+        else if (count >= 60) base = 0.38;
+        else if (count >= 25) base = 0.50;
+        else if (count >= 8) base = 0.70;
+        NSTimeInterval densityFactor = 1.15 - density * 0.55;
+        return MAX(0.18, MIN(1.15, base * densityFactor));
+    }
     CGFloat longevity = MAX(0.1, MIN(1.0, s.longevity));
     NSTimeInterval base = 6.5;
     if (count >= 700) base = 0.7;
@@ -320,7 +330,8 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 + (void)ytnico_ensureDrainTimer {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (gDrainTimer && gDrainTimer.valid) return;
-        gDrainTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 target:self selector:@selector(ytnico_drainTick) userInfo:nil repeats:NO];
+        NSTimeInterval first = SettingsManager.shared.niconicoMode ? 0.12 : 0.8;
+        gDrainTimer = [NSTimer scheduledTimerWithTimeInterval:first target:self selector:@selector(ytnico_drainTick) userInfo:nil repeats:NO];
     });
 }
 
@@ -344,9 +355,16 @@ static CFTimeInterval gPlaybackUpdateWallTime;
         NSUInteger count = gPendingMessages.count;
         CGFloat density = MAX(0.1, MIN(1.0, SettingsManager.shared.commentDensity));
         NSUInteger burst = 1;
-        if (count >= 700 && density > 0.72) burst = 4;
-        else if (count >= 450 && density > 0.58) burst = 3;
-        else if (count >= 180 && density > 0.48) burst = 2;
+        if (SettingsManager.shared.niconicoMode) {
+            if (count >= 300 && density > 0.72) burst = 5;
+            else if (count >= 120 && density > 0.62) burst = 4;
+            else if (count >= 50 && density > 0.52) burst = 3;
+            else if (count >= 12 && density > 0.42) burst = 2;
+        } else {
+            if (count >= 700 && density > 0.72) burst = 4;
+            else if (count >= 450 && density > 0.58) burst = 3;
+            else if (count >= 180 && density > 0.48) burst = 2;
+        }
         for (NSUInteger i = 0; i < burst && gPendingMessages.count > 0; i++) {
             NSDictionary *m = gPendingMessages.firstObject;
             [batch addObject:m];
