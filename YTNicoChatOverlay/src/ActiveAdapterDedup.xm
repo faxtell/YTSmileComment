@@ -14,6 +14,14 @@ static NSString *YTNicoDedupKey(NSString *author, NSString *text) {
     return key;
 }
 
+static void YTNicoClearVisibleDedupCache(void) {
+    if (!YTNicoRecentTextKeys) return;
+    @synchronized (YTNicoRecentTextKeys) {
+        [YTNicoRecentTextKeys removeAllObjects];
+    }
+    [[DebugInspector shared] log:@"visible dedup cache cleared"];
+}
+
 %hook YouTubeChatAdapter
 
 - (void)startObservingInRootView:(UIView *)rootView {
@@ -48,8 +56,18 @@ static NSString *YTNicoDedupKey(NSString *author, NSString *text) {
 }
 
 + (void)resetForVideoId:(NSString *)videoId {
-    @synchronized (YTNicoRecentTextKeys) { [YTNicoRecentTextKeys removeAllObjects]; }
+    YTNicoClearVisibleDedupCache();
     %orig(videoId);
+}
+
++ (void)forceResetForVideoId:(NSString *)videoId {
+    YTNicoClearVisibleDedupCache();
+    %orig(videoId);
+}
+
++ (void)clearCurrentVideoAndComments {
+    YTNicoClearVisibleDedupCache();
+    %orig;
 }
 
 %end
