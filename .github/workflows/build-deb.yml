@@ -51,11 +51,13 @@ jobs:
           chmod +x build_deb.sh
           ./build_deb.sh
           echo "Generated packages:"
-          find .theos/packages -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \;
+          find packages .theos/packages -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \; 2>/dev/null || true
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v7
         with:
           name: yt-nico-chat-overlay-deb
-          path: YTNicoChatOverlay/.theos/packages/*.deb
+          path: |
+            YTNicoChatOverlay/packages/*.deb
+            YTNicoChatOverlay/.theos/packages/*.deb
           if-no-files-found: error
