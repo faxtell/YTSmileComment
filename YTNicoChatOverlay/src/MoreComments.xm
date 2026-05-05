@@ -61,7 +61,7 @@ static NSInteger YTNicoPageCap(NSInteger target, NSInteger perPage) {
         NSString *next = r.length ? r : l;
         [[DebugInspector shared] log:@"more replay page=%ld total=%ld target=%ld", (long)page, (long)newTotal, (long)target];
         if (next.length > 0 && newTotal < target && page < cap) [self ytv2_fetchReplay:key version:version token:next page:page+1 emitted:newTotal generation:generation];
-        else if (newTotal == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUIDString];
+        else if (newTotal == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
     }];
 }
 
