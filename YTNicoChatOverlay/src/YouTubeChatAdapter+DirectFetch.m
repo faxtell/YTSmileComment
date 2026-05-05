@@ -144,7 +144,6 @@ static const NSInteger YTNicoMaxChatPages = 10;
 
 + (NSInteger)ytdf_parseResponseString:(NSString *)s maxCount:(NSInteger)maxCount preferLive:(BOOL)preferLive {
     if (s.length == 0) return 0;
-    NSMutableSet<NSString *> *seen = [NSMutableSet set];
     __block NSInteger count = 0;
 
     void (^emit)(NSString *, NSString *) = ^(NSString *author, NSString *text) {
