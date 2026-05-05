@@ -10,6 +10,7 @@ static const void *kAdapterKey = &kAdapterKey;
 
 @interface YTNicoController : NSObject <YouTubeChatAdapterDelegate>
 @property (nonatomic, weak) UIViewController *hostVC;
+@property (nonatomic, weak) UIView *attachedPlayer;
 @end
 
 @implementation YTNicoController
@@ -36,6 +37,8 @@ static const void *kAdapterKey = &kAdapterKey;
     CGRect f = [v convertRect:v.bounds toView:nil];
     CGSize screen = UIScreen.mainScreen.bounds.size;
     BOOL portrait = screen.height >= screen.width;
+    if (portrait && CGRectGetMinY(f) > screen.height * 0.55) return -CGFLOAT_MAX;
+    if (portrait && CGRectGetHeight(f) > screen.height * 0.65) return -CGFLOAT_MAX;
     CGFloat wRatio = MIN(1.2, f.size.width / MAX(screen.width, 1));
     CGFloat ratio = f.size.width / MAX(f.size.height, 1.0);
     CGFloat ratioScore = MAX(0, 1.0 - fabs(ratio - (16.0/9.0)) / 1.2);
@@ -66,7 +69,16 @@ static const void *kAdapterKey = &kAdapterKey;
     UIView *player = [self findBestPlayerView];
     if (!player) return;
     player.clipsToBounds = YES;
-    NicoChatOverlayView *overlay = objc_getAssociatedObject(player, kOverlayKey);
+
+    NicoChatOverlayView *overlay = nil;
+    if (self.attachedPlayer && self.attachedPlayer != player) {
+        NicoChatOverlayView *old = objc_getAssociatedObject(self.attachedPlayer, kOverlayKey);
+        [old removeFromSuperview];
+        objc_setAssociatedObject(self.attachedPlayer, kOverlayKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    self.attachedPlayer = player;
+
+    overlay = objc_getAssociatedObject(player, kOverlayKey);
     if (!overlay) {
         overlay = [[NicoChatOverlayView alloc] initWithFrame:player.bounds];
         overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -74,9 +86,8 @@ static const void *kAdapterKey = &kAdapterKey;
         overlay.layer.masksToBounds = YES;
         [player addSubview:overlay];
         objc_setAssociatedObject(player, kOverlayKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else {
-        overlay.frame = player.bounds;
     }
+    overlay.frame = player.bounds;
 
     YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
     if (!adapter) {
@@ -88,7 +99,7 @@ static const void *kAdapterKey = &kAdapterKey;
 }
 
 - (void)chatAdapterDidReceiveMessage:(NicoChatMessage *)message {
-    UIView *player = [self findBestPlayerView];
+    UIView *player = self.attachedPlayer ?: [self findBestPlayerView];
     NicoChatOverlayView *overlay = player ? objc_getAssociatedObject(player, kOverlayKey) : nil;
     [overlay enqueueMessage:message];
 }

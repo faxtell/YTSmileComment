@@ -17,7 +17,7 @@
     self.root = rootView;
     [self stopObserving];
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(scanTree) userInfo:nil repeats:YES];
-    if ([SettingsManager shared].mockMode) {
+    if ([SettingsManager shared].mockMode && [SettingsManager shared].debugLogging) {
         self.mockTimer = [NSTimer scheduledTimerWithTimeInterval:1.2 target:self selector:@selector(emitMock) userInfo:nil repeats:YES];
     }
 }
