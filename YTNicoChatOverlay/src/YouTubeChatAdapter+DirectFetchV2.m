@@ -57,7 +57,7 @@ static const NSInteger YTV2MaxLivePolls = 180;
         if (![self ytv2_gen:generation] || text.length == 0) return;
 
         BOOL liveNow = [self ytv2_isLiveNow:text];
-        BOOL replay = [self ytv2_hasReplaySignal:text];
+        BOOL replay = [self ytv2_hasReplaySignal:text] || [self ytv2_hasArchivedChatSignal:text];
         NSString *liveToken = [self ytv2_strictLiveToken:text];
         NSString *replayToken = [self ytv2_strictReplayToken:text];
         [[DebugInspector shared] log:@"route live=%d liveToken=%d replay=%d replayToken=%d", liveNow, liveToken.length > 0, replay, replayToken.length > 0];
@@ -88,7 +88,8 @@ static const NSInteger YTV2MaxLivePolls = 180;
 + (NSDictionary *)ytv2_context:(NSString *)ver { return @{@"client":@{@"clientName":@"WEB", @"clientVersion":ver ?: @"2.20250101.01.00", @"hl":@"ja", @"gl":@"JP"}}; }
 + (BOOL)ytv2_gen:(NSUInteger)g { return g == [YouTubeChatAdapter currentGeneration]; }
 + (BOOL)ytv2_hasReplaySignal:(NSString *)s { return [s rangeOfString:@"videoOffsetTimeMsec"].location != NSNotFound || [s rangeOfString:@"replayChatItemAction"].location != NSNotFound || [s rangeOfString:@"get_live_chat_replay"].location != NSNotFound || [s rangeOfString:@"liveChatReplayContinuationData"].location != NSNotFound || [s rangeOfString:@"replayContinuationData"].location != NSNotFound; }
-+ (BOOL)ytv2_isLiveNow:(NSString *)s { if ([self ytv2_hasReplaySignal:s]) return NO; return [s rangeOfString:@"\"isLiveNow\":true"].location != NSNotFound || [s rangeOfString:@"\"isLive\":true"].location != NSNotFound || ([s rangeOfString:@"liveChatRenderer"].location != NSNotFound && [s rangeOfString:@"LIVE_STREAM_OFFLINE"].location == NSNotFound); }
++ (BOOL)ytv2_hasArchivedChatSignal:(NSString *)s { return [s rangeOfString:@"liveChatRenderer"].location != NSNotFound && [s rangeOfString:@"\"isLiveNow\":true"].location == NSNotFound && [s rangeOfString:@"\"isLive\":true"].location == NSNotFound; }
++ (BOOL)ytv2_isLiveNow:(NSString *)s { if ([self ytv2_hasReplaySignal:s]) return NO; return [s rangeOfString:@"\"isLiveNow\":true"].location != NSNotFound || [s rangeOfString:@"\"isLive\":true"].location != NSNotFound; }
 
 + (NSString *)ytv2_strictTokenForKeys:(NSArray<NSString *> *)keys inText:(NSString *)s {
     for (NSString *key in keys) {
@@ -100,7 +101,7 @@ static const NSInteger YTV2MaxLivePolls = 180;
     return @"";
 }
 + (NSString *)ytv2_strictLiveToken:(NSString *)s { if (![self ytv2_isLiveNow:s]) return @""; return [self ytv2_strictTokenForKeys:@[@"liveChatRenderer", @"liveChatItemListRenderer", @"liveChatContinuation", @"liveChatHeaderRenderer"] inText:s]; }
-+ (NSString *)ytv2_strictReplayToken:(NSString *)s { if (![self ytv2_hasReplaySignal:s]) return @""; NSString *t = [self ytv2_strictTokenForKeys:@[@"liveChatReplayContinuationData", @"replayContinuationData"] inText:s]; if (t.length > 0) return t; return [self ytv2_strictTokenForKeys:@[@"liveChatContinuation", @"liveChatItemListRenderer", @"liveChatRenderer"] inText:s]; }
++ (NSString *)ytv2_strictReplayToken:(NSString *)s { if (![self ytv2_hasReplaySignal:s] && ![self ytv2_hasArchivedChatSignal:s]) return @""; NSString *t = [self ytv2_strictTokenForKeys:@[@"liveChatReplayContinuationData", @"replayContinuationData"] inText:s]; if (t.length > 0) return t; return [self ytv2_strictTokenForKeys:@[@"liveChatContinuation", @"liveChatItemListRenderer", @"liveChatRenderer"] inText:s]; }
 
 + (void)ytv2_fetchComments:(NSString *)key version:(NSString *)ver token:(NSString *)token page:(NSInteger)page emitted:(NSInteger)total generation:(NSUInteger)generation {
     if (![self ytv2_gen:generation] || page > YTV2MaxCommentPages || token.length == 0) return;
