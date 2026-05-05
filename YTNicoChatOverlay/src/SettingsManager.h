@@ -16,6 +16,18 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSString *> *)blockWords;
 - (BOOL)mockMode;
 - (BOOL)debugLogging;
+
+- (void)setEnabled:(BOOL)value;
+- (void)setFontSize:(CGFloat)value;
+- (void)setOpacity:(CGFloat)value;
+- (void)setSpeed:(CGFloat)value;
+- (void)setMaxLines:(NSInteger)value;
+- (void)setShowAuthorName:(BOOL)value;
+- (void)setEnableShadow:(BOOL)value;
+- (void)setEnableOutline:(BOOL)value;
+- (void)setBlockWords:(NSArray<NSString *> *)value;
+- (void)setMockMode:(BOOL)value;
+- (void)setDebugLogging:(BOOL)value;
 - (void)reload;
 @end
 
