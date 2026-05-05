@@ -7,7 +7,6 @@
 @interface NicoChatOverlayView ()
 @property (nonatomic, strong) NSMutableArray<NSNumber *> *laneAvailableAt;
 @property (nonatomic, assign) NSInteger laneCount;
-@property (nonatomic, assign) NSInteger nextLaneCursor;
 @property (nonatomic, assign) CGFloat laneHeight;
 @property (nonatomic, assign) UIEdgeInsets contentInsets;
 @property (nonatomic, assign) CGSize lastLayoutSize;
@@ -22,7 +21,6 @@
         self.layer.masksToBounds = YES;
         self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         self.laneAvailableAt = [NSMutableArray array];
-        self.nextLaneCursor = 0;
         [self rebuildLanesForce:YES];
     }
     return self;
@@ -85,7 +83,6 @@
     self.laneCount = wanted;
     self.laneHeight = laneHeight;
     self.contentInsets = UIEdgeInsetsMake(top, 0, bottom, 0);
-    if (force || self.nextLaneCursor >= wanted) self.nextLaneCursor = 0;
 
     NSMutableArray<NSNumber *> *newLanes = [NSMutableArray arrayWithCapacity:wanted];
     CFTimeInterval now = CACurrentMediaTime();
@@ -94,7 +91,7 @@
         else [newLanes addObject:@(now)];
     }
     self.laneAvailableAt = newLanes;
-    [[DebugInspector shared] log:@"lanes rebuilt count=%ld height=%.1f bounds=%@ cursor=%ld", (long)wanted, laneHeight, NSStringFromCGRect(self.bounds), (long)self.nextLaneCursor];
+    [[DebugInspector shared] log:@"lanes rebuilt count=%ld height=%.1f bounds=%@", (long)wanted, laneHeight, NSStringFromCGRect(self.bounds)];
 }
 
 - (NSInteger)pickLaneForCommentWidth:(CGFloat)width travelDistance:(CGFloat)travelDistance duration:(NSTimeInterval)duration {
@@ -104,15 +101,13 @@
 
     CFTimeInterval now = CACurrentMediaTime();
     NSInteger selectedIndex = NSNotFound;
-    NSInteger start = MAX(0, MIN(self.nextLaneCursor, count - 1));
 
-    // Niconico-like cascade: use lanes from top to bottom in order.
-    // This prevents slow comment streams from always reusing only lane 0.
-    for (NSInteger step = 0; step < count; step++) {
-        NSInteger idx = (start + step) % count;
-        CFTimeInterval availableAt = self.laneAvailableAt[idx].doubleValue;
+    // Top-first free lane selection: this matches Niconico better than round-robin.
+    // The separate queue drain interval controls how quickly lower lanes get used.
+    for (NSInteger i = 0; i < count; i++) {
+        CFTimeInterval availableAt = self.laneAvailableAt[i].doubleValue;
         if (availableAt <= now) {
-            selectedIndex = idx;
+            selectedIndex = i;
             break;
         }
     }
@@ -136,7 +131,6 @@
     CFTimeInterval laneCurrent = self.laneAvailableAt[selectedIndex].doubleValue;
     if (laneCurrent > now) nextAvailable = laneCurrent + tailClearDelay;
     self.laneAvailableAt[selectedIndex] = @(nextAvailable);
-    self.nextLaneCursor = (selectedIndex + 1) % MAX(1, count);
     return selectedIndex;
 }
 
@@ -187,7 +181,7 @@
         layer.zPosition = 10 + lane;
         [self.layer addSublayer:layer];
 
-        [[DebugInspector shared] log:@"comment lane=%ld/%ld cursor=%ld y=%.1f width=%.1f duration=%.1f text=%@", (long)lane, (long)self.laneCount, (long)self.nextLaneCursor, y, width, duration, renderedText];
+        [[DebugInspector shared] log:@"comment lane=%ld/%ld y=%.1f width=%.1f duration=%.1f text=%@", (long)lane, (long)self.laneCount, y, width, duration, renderedText];
 
         [CATransaction begin];
         [CATransaction setCompletionBlock:^{ [layer removeFromSuperlayer]; }];
@@ -205,7 +199,6 @@
 - (void)clearComments {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.layer.sublayers = nil;
-        self.nextLaneCursor = 0;
         [self rebuildLanesForce:YES];
     });
 }
