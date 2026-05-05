@@ -4,11 +4,28 @@
 
 static NSString *YTNicoLastFetchStartVideoId;
 static NSDate *YTNicoLastFetchStartDate;
+static BOOL YTNicoForceFetchInProgress;
+
+@implementation YouTubeChatAdapter (YTNicoForceFetch)
++ (void)ytnico_fetchCommentsForVideoIdIgnoringThrottle:(NSString *)videoId {
+    YTNicoForceFetchInProgress = YES;
+    [self fetchCommentsForVideoId:videoId];
+    YTNicoForceFetchInProgress = NO;
+}
+@end
 
 %hook YouTubeChatAdapter
 
 + (void)fetchCommentsForVideoId:(NSString *)videoId {
     if (![videoId isKindOfClass:NSString.class] || videoId.length != 11) {
+        %orig(videoId);
+        return;
+    }
+
+    if (YTNicoForceFetchInProgress) {
+        [[DebugInspector shared] important:@"force fetch bypass throttle videoId=%@", videoId];
+        YTNicoLastFetchStartVideoId = [videoId copy];
+        YTNicoLastFetchStartDate = NSDate.date;
         %orig(videoId);
         return;
     }
