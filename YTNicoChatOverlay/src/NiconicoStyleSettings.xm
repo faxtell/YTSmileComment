@@ -40,6 +40,14 @@ static UIButton *YTHubButton(NSString *title, NSString *subtitle) {
     return button;
 }
 
+static UIButton *YTHubCategoryButton(NSString *title, NSString *subtitle) {
+    UIButton *button = YTHubButton(title, subtitle);
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+    button.titleLabel.textAlignment = NSTextAlignmentCenter;
+    button.contentEdgeInsets = UIEdgeInsetsMake(9, 6, 9, 6);
+    return button;
+}
+
 static UIView *YTHubCard(void) {
     UIView *card = [UIView new];
     card.backgroundColor = UIColor.secondarySystemBackgroundColor;
@@ -64,6 +72,28 @@ static void YTHubPin(UIStackView *box, UIView *card) {
         [box.topAnchor constraintEqualToAnchor:card.topAnchor],
         [box.bottomAnchor constraintEqualToAnchor:card.bottomAnchor]
     ]];
+}
+
+static UIView *YTHubDivider(void) {
+    UIView *divider = [UIView new];
+    divider.backgroundColor = UIColor.separatorColor;
+    [divider.widthAnchor constraintEqualToConstant:1.0].active = YES;
+    return divider;
+}
+
+static UIStackView *YTHubCategoryRow(UIButton *left, UIButton *right) {
+    UIStackView *row = [UIStackView new];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.alignment = UIStackViewAlignmentFill;
+    row.distribution = UIStackViewDistributionFill;
+    row.spacing = 8.0;
+    [row addArrangedSubview:left];
+    [row addArrangedSubview:YTHubDivider()];
+    [row addArrangedSubview:right];
+    [left.widthAnchor constraintEqualToAnchor:right.widthAnchor].active = YES;
+    [left.heightAnchor constraintEqualToConstant:64.0].active = YES;
+    [right.heightAnchor constraintEqualToConstant:64.0].active = YES;
+    return row;
 }
 
 @implementation YTNicoCategoryViewController
@@ -128,8 +158,8 @@ static void YTHubPin(UIStackView *box, UIView *card) {
 
 - (void)buildDisplay:(UIStackView *)stack {
     SettingsManager *s = SettingsManager.shared;
-    [self addRowToStack:stack title:@"表示を有効化" subtitle:@"ライブチャットのオーバーレイ表示" control:YTHubSwitch(s.enabled, self, @selector(toggleEnabled:)) enabled:YES];
-    [self addRowToStack:stack title:@"投稿者名" subtitle:@"ニコニコ風ではOFF推奨" control:YTHubSwitch(s.showAuthorName, self, @selector(toggleAuthor:)) enabled:YES];
+    [self addRowToStack:stack title:@"👁️ 表示を有効化" subtitle:@"ライブチャットのオーバーレイ表示" control:YTHubSwitch(s.enabled, self, @selector(toggleEnabled:)) enabled:YES];
+    [self addRowToStack:stack title:@"👤 投稿者名" subtitle:@"ニコニコ風ではOFF推奨" control:YTHubSwitch(s.showAuthorName, self, @selector(toggleAuthor:)) enabled:YES];
     UILabel *fontValue = YTHubLabel([NSString stringWithFormat:@"%.0f", s.fontSize], 13, UIFontWeightMedium, UIColor.secondaryLabelColor);
     UISlider *font = [UISlider new];
     font.minimumValue = 10;
@@ -143,39 +173,39 @@ static void YTHubPin(UIStackView *box, UIView *card) {
     fontBox.layoutMargins = UIEdgeInsetsMake(12, 14, 12, 14);
     fontBox.layoutMarginsRelativeArrangement = YES;
     UIStackView *top = [UIStackView new]; top.axis = UILayoutConstraintAxisHorizontal;
-    [top addArrangedSubview:YTHubLabel(@"文字サイズ", 15, UIFontWeightSemibold, nil)];
+    [top addArrangedSubview:YTHubLabel(@"🔠 文字サイズ", 15, UIFontWeightSemibold, nil)];
     [top addArrangedSubview:fontValue];
     [fontBox addArrangedSubview:top];
     [fontBox addArrangedSubview:font];
     UIView *fontCard = YTHubCard();
     YTHubPin(fontBox, fontCard);
     [stack addArrangedSubview:fontCard];
-    [self addComingSoonRow:stack title:@"ニコニコ風プリセット"];
-    [self addComingSoonRow:stack title:@"スクロール時間"];
-    [self addComingSoonRow:stack title:@"黒縁の強さ"];
-    [self addComingSoonRow:stack title:@"動画サイズ連動フォント"];
+    [self addComingSoonRow:stack title:@"✨ ニコニコ風プリセット"];
+    [self addComingSoonRow:stack title:@"⏱️ スクロール時間"];
+    [self addComingSoonRow:stack title:@"🖊️ 黒縁の強さ"];
+    [self addComingSoonRow:stack title:@"📐 動画サイズ連動フォント"];
 }
 
 - (void)buildLive:(UIStackView *)stack {
     SettingsManager *s = SettingsManager.shared;
-    [self addRowToStack:stack title:@"自動取得" subtitle:@"ライブ再生開始時にチャット取得を試します" control:YTHubSwitch(s.autoFetch, self, @selector(toggleAutoFetch:)) enabled:YES];
-    [self addRowToStack:stack title:@"ライブチャット優先" subtitle:@"ライブ配信ではリアルタイムチャットだけを使います" control:YTHubSwitch(s.preferLiveChat, self, @selector(togglePreferLive:)) enabled:YES];
-    [self addComingSoonRow:stack title:@"通常動画コメント"];
-    [self addComingSoonRow:stack title:@"チャットリプレイ"];
-    [self addComingSoonRow:stack title:@"取得コメント数"];
-    [self addComingSoonRow:stack title:@"クリップボードURL取得"];
+    [self addRowToStack:stack title:@"⚡ 自動取得" subtitle:@"ライブ再生開始時にチャット取得を試します" control:YTHubSwitch(s.autoFetch, self, @selector(toggleAutoFetch:)) enabled:YES];
+    [self addRowToStack:stack title:@"📡 ライブチャット優先" subtitle:@"ライブ配信ではリアルタイムチャットだけを使います" control:YTHubSwitch(s.preferLiveChat, self, @selector(togglePreferLive:)) enabled:YES];
+    [self addComingSoonRow:stack title:@"💬 通常動画コメント"];
+    [self addComingSoonRow:stack title:@"⏮️ チャットリプレイ"];
+    [self addComingSoonRow:stack title:@"🔢 取得コメント数"];
+    [self addComingSoonRow:stack title:@"🔗 クリップボードURL取得"];
 }
 
 - (void)buildTools:(UIStackView *)stack {
     SettingsManager *s = SettingsManager.shared;
-    [self addRowToStack:stack title:@"デバッグログ" subtitle:@"不具合調査用" control:YTHubSwitch(s.debugLogging, self, @selector(toggleDebug:)) enabled:YES];
-    UIButton *copy = YTHubButton(@"ログをコピー", @"最近のログをクリップボードへ");
+    [self addRowToStack:stack title:@"🪲 デバッグログ" subtitle:@"不具合調査用" control:YTHubSwitch(s.debugLogging, self, @selector(toggleDebug:)) enabled:YES];
+    UIButton *copy = YTHubButton(@"📋 ログをコピー", @"最近のログをクリップボードへ");
     [copy addTarget:self action:@selector(copyLogs) forControlEvents:UIControlEventTouchUpInside];
     [stack addArrangedSubview:copy];
-    UIButton *clear = YTHubButton(@"ログを消去", @"ログバッファを空にします");
+    UIButton *clear = YTHubButton(@"🧹 ログを消去", @"ログバッファを空にします");
     [clear addTarget:self action:@selector(clearLogs) forControlEvents:UIControlEventTouchUpInside];
     [stack addArrangedSubview:clear];
-    [self addComingSoonRow:stack title:@"テストコメント"];
+    [self addComingSoonRow:stack title:@"🧪 テストコメント"];
 }
 
 - (void)buildComingSoon:(UIStackView *)stack {
@@ -186,7 +216,7 @@ static void YTHubPin(UIStackView *box, UIView *card) {
     box.layoutMargins = UIEdgeInsetsMake(18, 16, 18, 16);
     box.layoutMarginsRelativeArrangement = YES;
     YTHubPin(box, card);
-    [box addArrangedSubview:YTHubLabel(@"Coming Soon…", 18, UIFontWeightSemibold, UIColor.secondaryLabelColor)];
+    [box addArrangedSubview:YTHubLabel(@"🚧 Coming Soon…", 18, UIFontWeightSemibold, UIColor.secondaryLabelColor)];
     [box addArrangedSubview:YTHubLabel(@"ライブチャット専用モードが安定したら開放予定です。", 13, UIFontWeightRegular, UIColor.secondaryLabelColor)];
     [stack addArrangedSubview:card];
 }
@@ -223,26 +253,30 @@ static void YTHubPin(UIStackView *box, UIView *card) {
     sumBox.layoutMargins = UIEdgeInsetsMake(9, 12, 9, 12);
     sumBox.layoutMarginsRelativeArrangement = YES;
     YTHubPin(sumBox, summary);
-    [sumBox addArrangedSubview:YTHubLabel(@"ライブチャット専用モード", 17, UIFontWeightSemibold, nil)];
+    [sumBox addArrangedSubview:YTHubLabel(@"📺 ライブチャット専用モード", 17, UIFontWeightSemibold, nil)];
     [sumBox addArrangedSubview:YTHubLabel(@"通常コメント/リプレイはComing Soon…として無効化中", 11, UIFontWeightRegular, UIColor.secondaryLabelColor)];
     [stack addArrangedSubview:summary];
-    NSArray *items = @[
-        @[@"表示", @"文字・投稿者名", @"display"],
-        @[@"ライブチャット", @"自動取得・優先設定", @"live"],
-        @[@"操作/デバッグ", @"ログ・調査用", @"tools"],
-        @[@"その他", @"Coming Soon…", @"soon"]
-    ];
-    for (NSArray *item in items) {
-        UIButton *b = YTHubButton(item[0], item[1]);
-        b.accessibilityIdentifier = item[2];
-        [b addTarget:self action:@selector(ytnico_openHubCategory:) forControlEvents:UIControlEventTouchUpInside];
-        [stack addArrangedSubview:b];
-        [b.heightAnchor constraintGreaterThanOrEqualToConstant:49].active = YES;
-    }
+
+    UIButton *display = YTHubCategoryButton(@"🎨 表示", @"文字・投稿者名");
+    display.accessibilityIdentifier = @"display";
+    [display addTarget:self action:@selector(ytnico_openHubCategory:) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *live = YTHubCategoryButton(@"📡 ライブチャット", @"自動取得・優先設定");
+    live.accessibilityIdentifier = @"live";
+    [live addTarget:self action:@selector(ytnico_openHubCategory:) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *tools = YTHubCategoryButton(@"🛠️ 操作/デバッグ", @"ログ・調査用");
+    tools.accessibilityIdentifier = @"tools";
+    [tools addTarget:self action:@selector(ytnico_openHubCategory:) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *soon = YTHubCategoryButton(@"🚧 その他", @"Coming Soon…");
+    soon.accessibilityIdentifier = @"soon";
+    [soon addTarget:self action:@selector(ytnico_openHubCategory:) forControlEvents:UIControlEventTouchUpInside];
+
+    [stack addArrangedSubview:YTHubCategoryRow(display, live)];
+    [stack addArrangedSubview:YTHubCategoryRow(tools, soon)];
+
     UILabel *credit = YTHubLabel(@"クレジット", 12, UIFontWeightMedium, UIColor.secondaryLabelColor);
     credit.textAlignment = NSTextAlignmentCenter;
     [stack addArrangedSubview:credit];
-    UIButton *dev = YTHubButton(@"開発者: 🦈", @"x.com/sa_me_kun");
+    UIButton *dev = YTHubButton(@"🦈 開発者", @"x.com/sa_me_kun");
     [dev addTarget:self action:@selector(ytnico_openHubCredit) forControlEvents:UIControlEventTouchUpInside];
     [stack addArrangedSubview:dev];
     [dev.heightAnchor constraintGreaterThanOrEqualToConstant:45].active = YES;
@@ -254,10 +288,10 @@ static void YTHubPin(UIStackView *box, UIView *card) {
     YTNicoCategoryViewController *vc = [YTNicoCategoryViewController new];
     NSString *kind = sender.accessibilityIdentifier ?: @"soon";
     vc.categoryKind = kind;
-    if ([kind isEqualToString:@"display"]) vc.categoryTitle = @"表示設定";
-    else if ([kind isEqualToString:@"live"]) vc.categoryTitle = @"ライブチャット設定";
-    else if ([kind isEqualToString:@"tools"]) vc.categoryTitle = @"操作/デバッグ";
-    else vc.categoryTitle = @"Coming Soon…";
+    if ([kind isEqualToString:@"display"]) vc.categoryTitle = @"🎨 表示設定";
+    else if ([kind isEqualToString:@"live"]) vc.categoryTitle = @"📡 ライブチャット設定";
+    else if ([kind isEqualToString:@"tools"]) vc.categoryTitle = @"🛠️ 操作/デバッグ";
+    else vc.categoryTitle = @"🚧 Coming Soon…";
     [self.navigationController pushViewController:vc animated:YES];
 }
 
