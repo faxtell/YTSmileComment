@@ -23,11 +23,8 @@ static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.un
     UILabel *_titleLabel;
     UILabel *_bodyLabel;
     UIStackView *_tipsStack;
-    UIStackView *_requestStack;
     UILabel *_statusLabel;
 
-    UIButton *_followButton;
-    UIButton *_requestButton;
     UIButton *_backButton;
     UIButton *_skipButton;
     UIButton *_nextButton;
@@ -47,9 +44,12 @@ static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.un
     [d synchronize];
 }
 
+static NSUserDefaults *YTNicoTutorialDefaults(void) {
+    return [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialDomain] ?: NSUserDefaults.standardUserDefaults;
+}
+
 static BOOL YTNicoLicenseReady(void) {
-    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialDomain] ?: NSUserDefaults.standardUserDefaults;
-    return [d boolForKey:kYTNicoLicenseReadyKey];
+    return [YTNicoTutorialDefaults() boolForKey:kYTNicoLicenseReadyKey];
 }
 
 static BOOL YTNicoTutorialCheckLicense(NSString *input) {
@@ -60,7 +60,7 @@ static BOOL YTNicoTutorialCheckLicense(NSString *input) {
 }
 
 static void YTNicoTutorialSetReady(void) {
-    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialDomain] ?: NSUserDefaults.standardUserDefaults;
+    NSUserDefaults *d = YTNicoTutorialDefaults();
     [d setBool:YES forKey:kYTNicoLicenseReadyKey];
     [d setBool:YES forKey:@"enabled"];
     [d synchronize];
@@ -68,7 +68,7 @@ static void YTNicoTutorialSetReady(void) {
 }
 
 static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
-    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialDomain] ?: NSUserDefaults.standardUserDefaults;
+    NSUserDefaults *d = YTNicoTutorialDefaults();
     [d setDouble:[NSDate.date timeIntervalSince1970] + seconds forKey:kYTNicoSuppressTutorialUntilKey];
     [d synchronize];
 }
@@ -84,7 +84,8 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
         @{@"kind":@"intro", @"accent":UIColor.systemRedColor, @"icon":@"📺", @"title":@"ようこそ", @"body":@"YouTubeのライブチャットを、動画上にニコニコ風で流せます。\n\n現在は安定性優先のライブチャット専用モードです。", @"tips":@[@"ライブ配信のリアルタイムチャットに対応", @"通常コメントとリプレイは Coming Soon…", @"動画の上にコメントが流れます"]},
         @{@"kind":@"usage", @"accent":UIColor.systemBlueColor, @"icon":@"💬", @"title":@"使い方", @"body":@"ライブ配信を開くと、リアルタイムチャットの取得を試します。\n\n自動取得できない場合は、手動取得も使えます。", @"tips":@[@"ライブ配信を開く", @"吹き出しボタンでON/OFF", @"自動取得できない時は共有ボタンからリンクをコピー", @"その後、吹き出しボタンから手動でコメント取得"]},
         @{@"kind":@"settings", @"accent":UIColor.systemPurpleColor, @"icon":@"🎨", @"title":@"設定", @"body":@"設定は2列のカテゴリに整理されています。\n\n必要な項目だけをすぐに見つけられるようにしています。", @"tips":@[@"🎨 表示 = 文字や投稿者名", @"📡 ライブチャット = 取得まわり", @"🛠️ 操作/デバッグ = ログ確認", @"🚧 Coming Soon… = 今後追加予定"]},
-        @{@"kind":@"request", @"accent":UIColor.systemTealColor, @"icon":@"🦈", @"title":@"ライセンスを受け取る", @"body":@"ライセンスを持っていない場合は、下の2つの手順を進めてください。", @"tips":@[]},
+        @{@"kind":@"request1", @"accent":UIColor.systemTealColor, @"icon":@"🦈", @"title":@"ライセンス要求", @"body":@"STEP1\n開発者をフォローします。\n\n下のボタンを押すとリンクを開き、次のSTEPへ進みます。", @"tips":@[@"STEP1  開発者をフォローする", @"STEP2  ライセンスを要求する"]},
+        @{@"kind":@"request2", @"accent":UIColor.systemTealColor, @"icon":@"🔑", @"title":@"ライセンス要求", @"body":@"STEP2\nライセンスを要求します。\n\nSTEP1は完了済みです。下のボタンを押すとリンクを開き、認証ページへ進みます。", @"tips":@[@"✅ STEP1  開発者をフォローする（完了）", @"STEP2  ライセンスを要求する"]},
         @{@"kind":@"license", @"accent":UIColor.systemOrangeColor, @"icon":@"🔑", @"title":@"ライセンス認証", @"body":@"下部の「認証する」ボタンを押して、受け取ったライセンスキーを入力してください。\n\n認証が完了するまで、このページから先には進めません。", @"tips":@[@"キーを持っていない場合は、戻るボタンで前のページへ", @"認証に成功すると最後のページへ進めます"]},
         @{@"kind":@"start", @"accent":UIColor.systemGreenColor, @"icon":@"🚀", @"title":@"さぁ、はじめよう", @"body":@"準備が完了しました。\n\nこのボタンを押すと機能が有効になり、ライブチャット表示を利用できます。", @"tips":@[@"✅ ライセンス認証済み", @"✅ ライブチャット専用モード", @"✅ 自動取得ON", @"✅ 困った時は操作/デバッグへ"]}
     ];
@@ -171,14 +172,6 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     [_stack addArrangedSubview:_tipsStack];
     [_tipsStack.widthAnchor constraintEqualToAnchor:_stack.widthAnchor constant:-8].active = YES;
 
-    _requestStack = [UIStackView new];
-    _requestStack.axis = UILayoutConstraintAxisVertical;
-    _requestStack.alignment = UIStackViewAlignmentFill;
-    _requestStack.spacing = 14.0;
-    [_stack addArrangedSubview:_requestStack];
-    [_requestStack.widthAnchor constraintEqualToAnchor:_stack.widthAnchor constant:-8].active = YES;
-    [self buildRequestControls];
-
     _pageControl = [UIPageControl new];
     _pageControl.translatesAutoresizingMaskIntoConstraints = NO;
     _pageControl.numberOfPages = _pages.count;
@@ -216,72 +209,27 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     ]];
 }
 
-- (void)buildRequestControls {
-    UIView *step1 = [self stepBlockWithStep:@"STEP1" title:@"開発者をフォロー" buttonTitle:@"開発者をフォロー" icon:@"🦈" action:@selector(openDeveloper)];
-    [_requestStack addArrangedSubview:step1];
-    UIView *step2 = [self stepBlockWithStep:@"STEP2" title:@"ライセンスを要求" buttonTitle:@"ライセンスを要求" icon:@"🔑" action:@selector(openLicenseRequest)];
-    [_requestStack addArrangedSubview:step2];
-}
-
-- (UIView *)stepBlockWithStep:(NSString *)step title:(NSString *)title buttonTitle:(NSString *)buttonTitle icon:(NSString *)icon action:(SEL)action {
+- (UIView *)tipCard:(NSString *)text accent:(UIColor *)accent dimmed:(BOOL)dimmed {
     UIView *card = [UIView new];
-    card.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    card.layer.cornerRadius = 18.0;
-    card.layer.masksToBounds = YES;
-    UIStackView *box = [UIStackView new];
-    box.translatesAutoresizingMaskIntoConstraints = NO;
-    box.axis = UILayoutConstraintAxisVertical;
-    box.spacing = 9.0;
-    box.layoutMargins = UIEdgeInsetsMake(15, 15, 15, 15);
-    box.layoutMarginsRelativeArrangement = YES;
-    [card addSubview:box];
-    [NSLayoutConstraint activateConstraints:@[
-        [box.leadingAnchor constraintEqualToAnchor:card.leadingAnchor],
-        [box.trailingAnchor constraintEqualToAnchor:card.trailingAnchor],
-        [box.topAnchor constraintEqualToAnchor:card.topAnchor],
-        [box.bottomAnchor constraintEqualToAnchor:card.bottomAnchor]
-    ]];
-    UILabel *stepLabel = [UILabel new];
-    stepLabel.text = step;
-    stepLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    stepLabel.textColor = UIColor.secondaryLabelColor;
-    [box addArrangedSubview:stepLabel];
-    UILabel *titleLabel = [UILabel new];
-    titleLabel.text = [NSString stringWithFormat:@"%@ %@", icon ?: @"", title ?: @""];
-    titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightBold];
-    titleLabel.numberOfLines = 0;
-    [box addArrangedSubview:titleLabel];
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.backgroundColor = UIColor.systemTealColor;
-    button.layer.cornerRadius = 14.0;
-    button.layer.masksToBounds = YES;
-    [button setTitle:buttonTitle forState:UIControlStateNormal];
-    [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    button.userInteractionEnabled = YES;
-    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
-    [box addArrangedSubview:button];
-    [button.heightAnchor constraintEqualToConstant:50].active = YES;
-    return card;
-}
-
-- (UIView *)tipCard:(NSString *)text accent:(UIColor *)accent {
-    UIView *card = [UIView new];
-    card.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    card.backgroundColor = dimmed ? UIColor.tertiarySystemBackgroundColor : UIColor.secondarySystemBackgroundColor;
     card.layer.cornerRadius = 13.0;
     card.layer.masksToBounds = YES;
+    card.alpha = dimmed ? 0.55 : 1.0;
+
     UIView *bar = [UIView new];
     bar.translatesAutoresizingMaskIntoConstraints = NO;
-    bar.backgroundColor = [accent colorWithAlphaComponent:0.65];
+    bar.backgroundColor = [(dimmed ? UIColor.systemGrayColor : accent) colorWithAlphaComponent:0.65];
     [card addSubview:bar];
+
     UILabel *label = [UILabel new];
     label.translatesAutoresizingMaskIntoConstraints = NO;
     label.numberOfLines = 0;
     label.textAlignment = NSTextAlignmentLeft;
-    label.textColor = UIColor.labelColor;
+    label.textColor = dimmed ? UIColor.secondaryLabelColor : UIColor.labelColor;
     label.font = [UIFont systemFontOfSize:14.5 weight:UIFontWeightMedium];
     label.text = text ?: @"";
     [card addSubview:label];
+
     [NSLayoutConstraint activateConstraints:@[
         [bar.leadingAnchor constraintEqualToAnchor:card.leadingAnchor],
         [bar.topAnchor constraintEqualToAnchor:card.topAnchor],
@@ -300,7 +248,10 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
         [_tipsStack removeArrangedSubview:v];
         [v removeFromSuperview];
     }
-    for (NSString *tip in tips) [_tipsStack addArrangedSubview:[self tipCard:tip accent:accent ?: UIColor.systemRedColor]];
+    for (NSString *tip in tips) {
+        BOOL dimmed = [tip hasPrefix:@"✅ STEP1"];
+        [_tipsStack addArrangedSubview:[self tipCard:tip accent:accent ?: UIColor.systemRedColor dimmed:dimmed]];
+    }
 }
 
 - (NSDictionary *)currentPageInfo {
@@ -315,7 +266,8 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     NSDictionary *page = [self currentPageInfo];
     NSString *kind = page[@"kind"] ?: @"";
     UIColor *accent = page[@"accent"] ?: UIColor.systemRedColor;
-    BOOL requestPage = [kind isEqualToString:@"request"];
+    BOOL request1 = [kind isEqualToString:@"request1"];
+    BOOL request2 = [kind isEqualToString:@"request2"];
     BOOL licensePage = [kind isEqualToString:@"license"];
     BOOL startPage = [kind isEqualToString:@"start"];
     BOOL licensed = YTNicoLicenseReady() || _licenseVerifiedInSession;
@@ -325,22 +277,39 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     _titleLabel.text = page[@"title"];
     _bodyLabel.text = page[@"body"];
     _nextButton.backgroundColor = accent;
+    _pageControl.numberOfPages = _pages.count;
     _pageControl.currentPage = _index;
 
     [self fillTips:page[@"tips"] ?: @[] accent:accent];
-    _requestStack.hidden = !requestPage;
     _skipButton.hidden = !licensed;
     _backButton.hidden = (_index == 0);
     _statusLabel.hidden = (_statusLabel.text.length == 0);
 
-    if (licensePage) [_nextButton setTitle:@"認証する" forState:UIControlStateNormal];
+    if (request1) [_nextButton setTitle:@"開発者をフォローする" forState:UIControlStateNormal];
+    else if (request2) [_nextButton setTitle:@"ライセンスを要求する" forState:UIControlStateNormal];
+    else if (licensePage) [_nextButton setTitle:@"認証する" forState:UIControlStateNormal];
     else if (startPage) [_nextButton setTitle:@"さぁ、はじめよう" forState:UIControlStateNormal];
     else [_nextButton setTitle:@"次へ" forState:UIControlStateNormal];
+
     [_scrollView setContentOffset:CGPointZero animated:NO];
 }
 
 - (void)nextTapped {
     NSString *kind = [self currentKind];
+    if ([kind isEqualToString:@"request1"]) {
+        YTNicoSuppressTutorialForSeconds(45.0);
+        _statusLabel.text = @"STEP1を開きました。戻ったらSTEP2へ進みます。";
+        [self goNextWithAnimation];
+        [self openExternalURLString:@"https://x.com/sa_me_kun" fallback:@"https://twitter.com/sa_me_kun"];
+        return;
+    }
+    if ([kind isEqualToString:@"request2"]) {
+        YTNicoSuppressTutorialForSeconds(60.0);
+        _statusLabel.text = @"ライセンス要求を開きました。キーを受け取ったら認証してください。";
+        [self goNextWithAnimation];
+        [self openExternalURLString:@"https://twitter.com/messages/compose?recipient_id=1678480958671163392" fallback:@"https://x.com/messages/compose?recipient_id=1678480958671163392"];
+        return;
+    }
     if ([kind isEqualToString:@"license"]) {
         [self showLicensePrompt];
         return;
@@ -416,26 +385,20 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)openURLString:(NSString *)urlString {
+- (void)openExternalURLString:(NSString *)urlString fallback:(NSString *)fallbackURLString {
+    if (urlString.length == 0) return;
+    UIPasteboard.generalPasteboard.string = urlString;
     NSURL *url = [NSURL URLWithString:urlString];
-    if (!url) return;
+    NSURL *fallback = fallbackURLString.length ? [NSURL URLWithString:fallbackURLString] : nil;
     UIApplication *app = UIApplication.sharedApplication;
-    if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) [app openURL:url options:@{} completionHandler:nil];
-    else [app openURL:url];
-}
-
-- (void)openDeveloper {
-    YTNicoSuppressTutorialForSeconds(45.0);
-    _statusLabel.text = @"戻ったら、STEP2へ進んでください。";
-    [self renderPage];
-    [self openURLString:@"https://x.com/sa_me_kun"];
-}
-
-- (void)openLicenseRequest {
-    YTNicoSuppressTutorialForSeconds(60.0);
-    _statusLabel.text = @"要求後、受け取ったキーを次のページで入力してください。";
-    [self renderPage];
-    [self openURLString:@"https://twitter.com/messages/compose?recipient_id=1678480958671163392"];
+    if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+        [app openURL:url options:@{} completionHandler:^(BOOL success) {
+            if (!success && fallback) [app openURL:fallback options:@{} completionHandler:nil];
+        }];
+    } else {
+        BOOL ok = [app openURL:url];
+        if (!ok && fallback) [app openURL:fallback];
+    }
 }
 
 - (void)skipTutorial {
