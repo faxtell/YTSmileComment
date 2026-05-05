@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <math.h>
 #import "DebugInspector.h"
 
 @interface YTNicoController : NSObject
@@ -36,7 +37,6 @@
     if (rect.origin.y <= safeTop + 16.0 && rect.size.height >= screenH * 0.35) score += 70.0;
     if (feedThumbnail) score += 22.0;
 
-    // Penalize tiny controls and lower page thumbnails only after allowing feed thumbnails.
     if (rect.size.height < 100.0) score -= 40.0;
     if (!largeTopPortraitPlayer && !fullscreenLandscapePlayer && rect.origin.y > screenH * 0.55) score -= 28.0;
     if (view.subviews.count > 120) score -= 18.0;
