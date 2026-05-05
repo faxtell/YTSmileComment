@@ -1,0 +1,9 @@
+Package: com.example.yt-nico-chat-overlay
+Name: YT Nico Chat Overlay
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: NicoNico-style scrolling chat overlay for YouTube live/premiere
+Maintainer: Local Developer
+Author: Local Developer
+Section: Tweaks
+Depends: mobilesubstrate
