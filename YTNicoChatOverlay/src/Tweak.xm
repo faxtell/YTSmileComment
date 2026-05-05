@@ -7,6 +7,10 @@
 #import "DebugInspector.h"
 #import "YTNicoSettingsViewController.h"
 
+@interface YouTubeChatAdapter (YTNicoManualFetch)
++ (void)ytnico_fetchCommentsForVideoIdIgnoringThrottle:(NSString *)videoId;
+@end
+
 static const void *kOverlayKey = &kOverlayKey;
 static const void *kAdapterKey = &kAdapterKey;
 static const void *kButtonKey = &kButtonKey;
@@ -383,9 +387,9 @@ static const void *kToastKey = &kToastKey;
         return;
     }
     [self ensureOverlayAttached];
-    [YouTubeChatAdapter resetForVideoId:videoId];
+    [YouTubeChatAdapter forceResetForVideoId:videoId];
     [self showSystemToast:[NSString stringWithFormat:@"コメント取得開始: %@", videoId]];
-    [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
+    [YouTubeChatAdapter ytnico_fetchCommentsForVideoIdIgnoringThrottle:videoId];
 }
 
 - (void)presentSettingsPage {
