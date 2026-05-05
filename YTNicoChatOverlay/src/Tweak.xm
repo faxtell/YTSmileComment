@@ -22,6 +22,7 @@ static const void *kCtlKey = &kCtlKey;
     if ((self = [super init])) {
         _window = window;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadSettings) name:kYTNicoSettingsChangedNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(clearOverlayForVideoChange) name:kYTNicoClearOverlayNotification object:nil];
         [self setup];
     }
     return self;
@@ -40,6 +41,11 @@ static const void *kCtlKey = &kCtlKey;
     YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
     [adapter stopObserving];
     [self setup];
+}
+
+- (void)clearOverlayForVideoChange {
+    NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
+    [overlay clearComments];
 }
 
 - (void)setup {
@@ -252,8 +258,9 @@ static const void *kCtlKey = &kCtlKey;
         return;
     }
     [self ensureOverlayAttached];
+    [YouTubeChatAdapter resetForVideoId:videoId];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
+    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
     [overlay enqueueMessage:msg];
     [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
 }
