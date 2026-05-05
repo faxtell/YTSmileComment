@@ -15,7 +15,7 @@
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _cache = [[NicoMessageLRUCache alloc] initWithCapacity:1200];
+        _cache = [[NicoMessageLRUCache alloc] initWithCapacity:1600];
     }
     return self;
 }
@@ -27,12 +27,7 @@
     }
     self.root = rootView;
     [self stopObserving];
-
-    self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:1.25
-                                                      target:self
-                                                    selector:@selector(scanTree)
-                                                    userInfo:nil
-                                                     repeats:YES];
+    self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(scanTree) userInfo:nil repeats:YES];
     [self refreshMockTimer];
     [self scanTree];
 }
@@ -40,11 +35,7 @@
 - (void)refreshMockTimer {
     BOOL wantsMock = [SettingsManager shared].mockMode;
     if (wantsMock && !self.mockTimer) {
-        self.mockTimer = [NSTimer scheduledTimerWithTimeInterval:1.4
-                                                          target:self
-                                                        selector:@selector(emitMock)
-                                                        userInfo:nil
-                                                         repeats:YES];
+        self.mockTimer = [NSTimer scheduledTimerWithTimeInterval:1.4 target:self selector:@selector(emitMock) userInfo:nil repeats:YES];
     } else if (!wantsMock && self.mockTimer) {
         [self.mockTimer invalidate];
         self.mockTimer = nil;
@@ -59,285 +50,170 @@
 - (void)scanTree {
     UIView *root = self.root;
     if (!root || root.hidden || root.alpha < 0.05) return;
-    [[DebugInspector shared] log:@"scanTree start"];
 
-    NSArray<UIView *> *regions = [self commentRegionsInView:root];
-    if (regions.count == 0) {
-        [[DebugInspector shared] log:@"No comment/chat region found"];
-        return;
-    }
+    NSArray<NSDictionary *> *items = [self visibleTextItemsInView:root limit:320 allowPlayerArea:NO];
+    if (items.count == 0) return;
 
-    for (UIView *region in regions) {
-        [self scanMessageContainersInRegion:region depth:0];
-    }
-}
-
-#pragma mark - Region detection
-
-- (NSArray<UIView *> *)commentRegionsInView:(UIView *)root {
-    NSMutableArray<UIView *> *regions = [NSMutableArray array];
-    [self collectCommentRegionsFromView:root into:regions depth:0];
-    return [self deduplicatedRegions:regions];
-}
-
-- (void)collectCommentRegionsFromView:(UIView *)view into:(NSMutableArray<UIView *> *)regions depth:(NSInteger)depth {
-    if (!view || depth > 8 || view.hidden || view.alpha < 0.05) return;
-
-    if ([self isLikelyCommentRegion:view]) {
-        [regions addObject:view];
-        // Do not return. Nested sheets/cells can contain a better scrolling container.
-    }
-
-    for (UIView *subview in view.subviews) {
-        [self collectCommentRegionsFromView:subview into:regions depth:depth + 1];
-    }
-}
-
-- (NSArray<UIView *> *)deduplicatedRegions:(NSArray<UIView *> *)regions {
-    NSMutableArray<UIView *> *result = [NSMutableArray array];
-    for (UIView *candidate in regions) {
-        BOOL isInsideExisting = NO;
-        for (UIView *existing in result) {
-            if ([candidate isDescendantOfView:existing]) {
-                isInsideExisting = YES;
-                break;
-            }
-        }
-        if (!isInsideExisting) [result addObject:candidate];
-    }
-    return result;
-}
-
-- (BOOL)isLikelyCommentRegion:(UIView *)view {
-    if (!view || view.bounds.size.width < 180.0 || view.bounds.size.height < 80.0) return NO;
-    if ([self isInsidePlayerArea:view]) return NO;
-
-    NSString *className = NSStringFromClass(view.class).lowercaseString;
-    BOOL classHint = ([className containsString:@"comment"] ||
-                      [className containsString:@"comments"] ||
-                      [className containsString:@"reply"] ||
-                      [className containsString:@"chat"] ||
-                      [className containsString:@"engagement"] ||
-                      [className containsString:@"sheet"] ||
-                      [className containsString:@"collection"] ||
-                      [className containsString:@"table"] ||
-                      [className containsString:@"scroll"]);
-
-    NSArray<NSString *> *texts = [self visibleLabelTextsInView:view limit:16 allowPlayerArea:NO];
-    NSInteger headerHits = 0;
-    NSInteger messageLike = 0;
-    for (NSString *text in texts) {
-        if ([self isCommentRegionHeader:text]) headerHits++;
-        if (![self shouldIgnoreText:text] && ![self isTimeOrActionText:text]) messageLike++;
-    }
-
-    if (headerHits > 0 && messageLike >= 1) return YES;
-    if (classHint && messageLike >= 2) return YES;
-    return NO;
-}
-
-- (BOOL)isCommentRegionHeader:(NSString *)text {
-    NSString *lower = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
-    NSArray<NSString *> *headers = @[
-        @"コメント", @"返信", @"ライブ チャット", @"ライブチャット", @"上位チャット", @"チャット",
-        @"comments", @"replies", @"reply", @"live chat", @"top chat", @"chat replay"
-    ];
-    for (NSString *h in headers) {
-        if ([lower isEqualToString:h.lowercaseString] || [lower hasPrefix:h.lowercaseString]) return YES;
-    }
-    return NO;
-}
-
-- (BOOL)isInsidePlayerArea:(UIView *)view {
-    CGRect rect = [view convertRect:view.bounds toView:nil];
-    CGSize screen = UIScreen.mainScreen.bounds.size;
-    CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
-
-    BOOL topVideoLike = (rect.origin.y < screen.height * 0.45 &&
-                         rect.size.width >= screen.width * 0.65 &&
-                         ratio > 1.25 && ratio < 2.5 &&
-                         rect.size.height <= screen.height * 0.55);
-    BOOL fullscreenVideoLike = (rect.size.width >= screen.width * 0.85 &&
-                                rect.size.height >= screen.height * 0.55 &&
-                                ratio > 1.25);
-    return topVideoLike || fullscreenVideoLike;
-}
-
-#pragma mark - Message scanning
-
-- (void)scanMessageContainersInRegion:(UIView *)region depth:(NSInteger)depth {
-    if (!region || depth > 9 || region.hidden || region.alpha < 0.05) return;
-
-    if ([region isKindOfClass:WKWebView.class]) {
-        [self extractMessagesFromWebView:(WKWebView *)region];
-        return;
-    }
-
-    if ([self looksLikeMessageContainer:region]) {
-        [self tryEmitMessageFromContainer:region];
-    }
-
-    for (UIView *subview in region.subviews) {
-        [self scanMessageContainersInRegion:subview depth:depth + 1];
-    }
-}
-
-- (BOOL)looksLikeMessageContainer:(UIView *)view {
-    if (!view || view.bounds.size.width < 120.0) return NO;
-    if ([self isInsidePlayerArea:view]) return NO;
-    CGFloat h = view.bounds.size.height;
-    if (h < 28.0 || h > 280.0) return NO;
-
-    NSInteger labelCount = [self countLabelsInView:view limit:12 depth:0];
-    if (labelCount < 2 || labelCount > 10) return NO;
-
-    NSString *className = NSStringFromClass(view.class).lowercaseString;
-    BOOL classLooksRight = ([className containsString:@"cell"] ||
-                            [className containsString:@"comment"] ||
-                            [className containsString:@"reply"] ||
-                            [className containsString:@"chat"] ||
-                            [className containsString:@"message"] ||
-                            [className containsString:@"renderer"]);
-
-    NSArray<NSString *> *texts = [self visibleLabelTextsInView:view limit:12 allowPlayerArea:NO];
-    NSInteger useful = 0;
-    for (NSString *text in texts) {
-        if (![self shouldIgnoreText:text] && ![self isTimeOrActionText:text]) useful++;
-    }
-
-    return classLooksRight || useful >= 2;
-}
-
-- (NSInteger)countLabelsInView:(UIView *)view limit:(NSInteger)limit depth:(NSInteger)depth {
-    if (!view || limit <= 0 || depth > 5 || view.hidden || view.alpha < 0.05) return 0;
-    NSInteger total = [view isKindOfClass:UILabel.class] ? 1 : 0;
-    if (total >= limit) return total;
-    for (UIView *subview in view.subviews) {
-        total += [self countLabelsInView:subview limit:(limit - total) depth:depth + 1];
-        if (total >= limit) break;
-    }
-    return total;
-}
-
-- (void)tryEmitMessageFromContainer:(UIView *)container {
-    NSArray<NSString *> *texts = [self visibleLabelTextsInView:container limit:14 allowPlayerArea:NO];
-    if (texts.count < 2) return;
-
-    for (NSString *line in texts) {
-        if ([self parsePotentialInlineMessage:line]) return;
-    }
-
-    NSMutableArray<NSString *> *clean = [NSMutableArray array];
-    for (NSString *text in texts) {
-        NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (trimmed.length == 0) continue;
-        if ([self shouldIgnoreText:trimmed]) continue;
-        if ([self isTimeOrActionText:trimmed]) continue;
-        if ([self isLikelySubtitleLine:trimmed]) continue;
-        if (![clean containsObject:trimmed]) [clean addObject:trimmed];
-    }
-
-    if (clean.count < 2) return;
-
-    NSString *author = nil;
-    NSInteger authorIndex = NSNotFound;
-    for (NSInteger i = 0; i < clean.count; i++) {
-        NSString *candidate = clean[i];
-        if ([self looksLikeAuthor:candidate]) {
-            author = candidate;
-            authorIndex = i;
+    BOOL hasCommentUI = NO;
+    for (NSDictionary *item in items) {
+        NSString *text = item[@"text"];
+        if ([self isCommentRegionHeader:text]) {
+            hasCommentUI = YES;
             break;
         }
     }
-    if (!author || authorIndex == NSNotFound) return;
-
-    NSString *body = nil;
-    for (NSInteger i = authorIndex + 1; i < clean.count; i++) {
-        NSString *candidate = clean[i];
-        if (![self looksLikeMessageBody:candidate]) continue;
-        if (!body || candidate.length > body.length) body = candidate;
+    if (!hasCommentUI) {
+        [[DebugInspector shared] log:@"No visible comments/chat header"];
+        return;
     }
 
-    if (!body) return;
-    [self emitAuthor:author text:body];
+    [[DebugInspector shared] log:@"Visible text items=%lu", (unsigned long)items.count];
+    [self parseVisibleTextItems:items];
 }
 
-#pragma mark - Text collection
+#pragma mark - Visible text collection
 
-- (NSArray<NSString *> *)visibleLabelTextsInView:(UIView *)view limit:(NSInteger)limit allowPlayerArea:(BOOL)allowPlayerArea {
-    NSMutableArray<NSDictionary *> *infos = [NSMutableArray array];
-    [self collectLabelInfosFromView:view into:infos limit:limit depth:0 allowPlayerArea:allowPlayerArea];
-    [infos sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+- (NSArray<NSDictionary *> *)visibleTextItemsInView:(UIView *)view limit:(NSInteger)limit allowPlayerArea:(BOOL)allowPlayerArea {
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+    [self collectTextItemsFromView:view into:items limit:limit depth:0 allowPlayerArea:allowPlayerArea];
+    [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         CGFloat ay = [a[@"y"] doubleValue];
         CGFloat by = [b[@"y"] doubleValue];
-        if (fabs(ay - by) > 3.0) return ay < by ? NSOrderedAscending : NSOrderedDescending;
+        if (fabs(ay - by) > 4.0) return ay < by ? NSOrderedAscending : NSOrderedDescending;
         CGFloat ax = [a[@"x"] doubleValue];
         CGFloat bx = [b[@"x"] doubleValue];
         return ax < bx ? NSOrderedAscending : (ax > bx ? NSOrderedDescending : NSOrderedSame);
     }];
-
-    NSMutableArray<NSString *> *texts = [NSMutableArray array];
-    for (NSDictionary *info in infos) {
-        NSString *text = info[@"text"];
-        if (text.length > 0 && ![texts containsObject:text]) [texts addObject:text];
-    }
-    return texts;
+    return items;
 }
 
-- (void)collectLabelInfosFromView:(UIView *)view
-                             into:(NSMutableArray<NSDictionary *> *)infos
-                            limit:(NSInteger)limit
-                            depth:(NSInteger)depth
-                  allowPlayerArea:(BOOL)allowPlayerArea {
-    if (!view || depth > 6 || infos.count >= limit || view.hidden || view.alpha < 0.05) return;
+- (void)collectTextItemsFromView:(UIView *)view
+                            into:(NSMutableArray<NSDictionary *> *)items
+                           limit:(NSInteger)limit
+                           depth:(NSInteger)depth
+                 allowPlayerArea:(BOOL)allowPlayerArea {
+    if (!view || depth > 9 || items.count >= limit || view.hidden || view.alpha < 0.05) return;
     if (!allowPlayerArea && [self isInsidePlayerArea:view]) return;
+
+    NSMutableArray<NSString *> *texts = [NSMutableArray array];
 
     if ([view isKindOfClass:UILabel.class]) {
         UILabel *label = (UILabel *)view;
-        NSString *text = [label.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (text.length > 0 && text.length <= 240 && ![self isLikelySubtitleLine:text]) {
-            CGRect rect = [label convertRect:label.bounds toView:nil];
-            [infos addObject:@{@"text": text, @"x": @(CGRectGetMinX(rect)), @"y": @(CGRectGetMinY(rect))}];
+        [self addText:label.text toArray:texts];
+        [self addText:label.attributedText.string toArray:texts];
+    }
+
+    if (![view isKindOfClass:UIControl.class]) {
+        [self addText:view.accessibilityLabel toArray:texts];
+        [self addText:view.accessibilityValue toArray:texts];
+    }
+
+    if ([view isKindOfClass:WKWebView.class]) {
+        [self extractMessagesFromWebView:(WKWebView *)view];
+    }
+
+    if (texts.count > 0) {
+        CGRect rect = [view convertRect:view.bounds toView:nil];
+        for (NSString *raw in texts) {
+            NSArray<NSString *> *split = [self splitRawText:raw];
+            for (NSString *part in split) {
+                NSString *clean = [part stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                if (clean.length == 0 || clean.length > 260) continue;
+                if ([self isLikelyPlayerChromeText:clean]) continue;
+                NSDictionary *item = @{@"text": clean,
+                                       @"x": @(CGRectGetMinX(rect)),
+                                       @"y": @(CGRectGetMinY(rect)),
+                                       @"class": NSStringFromClass(view.class)};
+                if (![items containsObject:item]) [items addObject:item];
+                if (items.count >= limit) break;
+            }
+            if (items.count >= limit) break;
         }
     }
 
     for (UIView *subview in view.subviews) {
-        [self collectLabelInfosFromView:subview into:infos limit:limit depth:depth + 1 allowPlayerArea:allowPlayerArea];
-        if (infos.count >= limit) break;
+        [self collectTextItemsFromView:subview into:items limit:limit depth:depth + 1 allowPlayerArea:allowPlayerArea];
+        if (items.count >= limit) break;
     }
 }
 
-#pragma mark - WebView extraction
-
-- (void)extractMessagesFromWebView:(WKWebView *)webView {
-    if ([self isInsidePlayerArea:webView]) return;
-    NSString *script = @"(function(){"
-                         "var text=document.body?document.body.innerText:'';"
-                         "if(!text){return [];}"
-                         "return text.split('\\n').map(function(x){return x.trim();}).filter(Boolean).slice(-40);"
-                       "})();";
-    [webView evaluateJavaScript:script completionHandler:^(id result, NSError *error) {
-        if (![result isKindOfClass:NSArray.class]) return;
-        NSArray *lines = (NSArray *)result;
-        for (id item in lines) {
-            if ([item isKindOfClass:NSString.class]) {
-                [self parsePotentialInlineMessage:(NSString *)item];
-            }
-        }
-    }];
+- (void)addText:(NSString *)text toArray:(NSMutableArray<NSString *> *)array {
+    if (![text isKindOfClass:NSString.class]) return;
+    NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length == 0) return;
+    if (![array containsObject:trimmed]) [array addObject:trimmed];
 }
 
-#pragma mark - Parsing and filtering
+- (NSArray<NSString *> *)splitRawText:(NSString *)raw {
+    if (raw.length == 0) return @[];
+    NSString *normalized = [raw stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    NSArray<NSString *> *lines = [normalized componentsSeparatedByString:@"\n"];
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (trimmed.length > 0 && ![result containsObject:trimmed]) [result addObject:trimmed];
+    }
+    return result;
+}
+
+#pragma mark - Parsing
+
+- (void)parseVisibleTextItems:(NSArray<NSDictionary *> *)items {
+    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+    for (NSDictionary *item in items) {
+        NSString *text = item[@"text"];
+        if (text.length == 0) continue;
+        if ([texts containsObject:text]) continue;
+        [texts addObject:text];
+    }
+
+    for (NSInteger i = 0; i < texts.count; i++) {
+        NSString *line = texts[i];
+        if ([self parsePotentialInlineMessage:line]) continue;
+
+        NSString *author = [self cleanAuthorFromCandidate:line];
+        if (![self looksLikeAuthor:author]) continue;
+
+        NSString *body = nil;
+        for (NSInteger j = i + 1; j < MIN((NSInteger)texts.count, i + 6); j++) {
+            NSString *candidate = texts[j];
+            if ([self isCommentRegionHeader:candidate]) continue;
+            if ([self shouldIgnoreText:candidate]) continue;
+            if ([self isTimeOrActionText:candidate]) continue;
+            if ([self looksLikeAuthor:[self cleanAuthorFromCandidate:candidate]]) break;
+            if (![self looksLikeMessageBody:candidate]) continue;
+            body = candidate;
+            break;
+        }
+
+        if (body.length > 0) {
+            [self emitAuthor:author text:body];
+        }
+    }
+}
+
+- (NSString *)cleanAuthorFromCandidate:(NSString *)candidate {
+    NSString *trimmed = [candidate stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSArray<NSString *> *separators = @[@"・", @"•", @"·", @" ･ ", @" - "];
+    for (NSString *sep in separators) {
+        NSRange r = [trimmed rangeOfString:sep];
+        if (r.location != NSNotFound && r.location > 0) {
+            trimmed = [[trimmed substringToIndex:r.location] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            break;
+        }
+    }
+    return trimmed;
+}
 
 - (BOOL)parsePotentialInlineMessage:(NSString *)line {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (trimmed.length == 0 || [self shouldIgnoreText:trimmed] || [self isLikelySubtitleLine:trimmed]) return NO;
+    if (trimmed.length == 0 || [self shouldIgnoreText:trimmed]) return NO;
 
     NSArray<NSString *> *separators = @[@"：", @":"];
     for (NSString *separator in separators) {
         NSRange range = [trimmed rangeOfString:separator];
         if (range.location == NSNotFound || range.location == 0) continue;
-        NSString *author = [[trimmed substringToIndex:range.location] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString *author = [self cleanAuthorFromCandidate:[trimmed substringToIndex:range.location]];
         NSString *body = [[trimmed substringFromIndex:range.location + separator.length] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (![self looksLikeAuthor:author] || ![self looksLikeMessageBody:body]) continue;
         [self emitAuthor:author text:body];
@@ -346,18 +222,35 @@
     return NO;
 }
 
+#pragma mark - Filtering
+
+- (BOOL)isCommentRegionHeader:(NSString *)text {
+    NSString *lower = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+    NSArray<NSString *> *headers = @[@"コメント", @"返信", @"ライブ チャット", @"ライブチャット", @"上位チャット", @"チャット", @"chat replay", @"comments", @"replies", @"reply", @"live chat", @"top chat"];
+    for (NSString *h in headers) {
+        NSString *hl = h.lowercaseString;
+        if ([lower isEqualToString:hl] || [lower hasPrefix:hl]) return YES;
+    }
+    return NO;
+}
+
 - (BOOL)looksLikeAuthor:(NSString *)author {
     NSString *trimmed = [author stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (trimmed.length == 0 || trimmed.length > 64) return NO;
-    if ([self shouldIgnoreText:trimmed] || [self isTimeOrActionText:trimmed] || [self isLikelySubtitleLine:trimmed]) return NO;
+    if (trimmed.length == 0 || trimmed.length > 80) return NO;
+    if ([self shouldIgnoreText:trimmed]) return NO;
+    if ([trimmed hasPrefix:@"@"] && trimmed.length >= 2) return YES;
+    if ([self isTimeOrActionText:trimmed]) return NO;
     if ([trimmed containsString:@"http://"] || [trimmed containsString:@"https://"]) return NO;
-    return YES;
+    return trimmed.length <= 48;
 }
 
 - (BOOL)looksLikeMessageBody:(NSString *)body {
     NSString *trimmed = [body stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (trimmed.length == 0 || trimmed.length > 220) return NO;
-    if ([self shouldIgnoreText:trimmed] || [self isTimeOrActionText:trimmed] || [self isLikelySubtitleLine:trimmed]) return NO;
+    if (trimmed.length == 0 || trimmed.length > 360) return NO;
+    if ([self shouldIgnoreText:trimmed]) return NO;
+    if ([self isTimeOrActionText:trimmed]) return NO;
+    if ([self isCommentRegionHeader:trimmed]) return NO;
+    if ([trimmed hasPrefix:@"@"] && trimmed.length < 80) return NO;
     return YES;
 }
 
@@ -370,11 +263,7 @@
     }
 
     NSString *lower = trimmed.lowercaseString;
-    NSSet<NSString *> *exactUI = [NSSet setWithArray:@[
-        @"コメント", @"ライブ チャット", @"ライブチャット", @"上位チャット", @"top chat", @"live chat",
-        @"高評価", @"低評価", @"共有", @"保存", @"オフライン", @"チャンネル登録", @"その他",
-        @"返信", @"キャンセル", @"送信", @"並べ替え", @"コメントを追加", @"コメントする", @"完璧な経歴"
-    ]];
+    NSSet<NSString *> *exactUI = [NSSet setWithArray:@[@"高評価", @"低評価", @"共有", @"保存", @"オフライン", @"チャンネル登録", @"その他", @"キャンセル", @"送信", @"並べ替え", @"コメントを追加", @"コメントする", @"続きを読む", @"もっと見る", @"翻訳"]];
     if ([exactUI containsObject:lower]) return YES;
 
     NSArray<NSString *> *uiFragments = @[@"回視聴", @"人が視聴中", @"チャンネル登録者", @"www.youtube.com", @"youtube.com/", @"字幕", @"cc"];
@@ -384,17 +273,12 @@
     return NO;
 }
 
-- (BOOL)isLikelySubtitleLine:(NSString *)text {
+- (BOOL)isLikelyPlayerChromeText:(NSString *)text {
     NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (trimmed.length == 0) return YES;
-
-    // Subtitles often appear as long sentence-like labels without an author, and
-    // are located inside the player area before collection. This extra filter
-    // catches common caption fragments that may be copied into parent containers.
-    if (trimmed.length >= 22 && ![trimmed hasPrefix:@"@"] && ![trimmed containsString:@"・"] && ![trimmed containsString:@"•"]) {
-        NSCharacterSet *punct = [NSCharacterSet characterSetWithCharactersInString:@"。！？.!?、,"];
-        if ([trimmed rangeOfCharacterFromSet:punct].location != NSNotFound) return YES;
-    }
+    NSString *lower = trimmed.lowercaseString;
+    NSArray<NSString *> *chrome = @[@"再生", @"一時停止", @"全画面", @"ミュート", @"字幕", @"画質", @"設定", @"pause", @"play", @"fullscreen", @"captions", @"quality", @"settings"];
+    for (NSString *c in chrome) if ([lower containsString:c.lowercaseString]) return YES;
     return NO;
 }
 
@@ -409,27 +293,54 @@
     NSArray<NSString *> *suffixes = @[@"秒前", @"分前", @"時間前", @"日前", @"週間前", @"か月前", @"ヶ月前", @"年前", @"seconds ago", @"minutes ago", @"hours ago", @"days ago", @"weeks ago", @"months ago", @"years ago"];
     for (NSString *suffix in suffixes) if ([lower hasSuffix:suffix]) return YES;
 
-    NSRegularExpression *timeRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d{1,2}:\\d{2}(:\\d{2})?$"
-                                                                               options:0
-                                                                                 error:nil];
+    NSRegularExpression *timeRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d{1,2}:\\d{2}(:\\d{2})?$" options:0 error:nil];
     if ([timeRegex numberOfMatchesInString:trimmed options:0 range:NSMakeRange(0, trimmed.length)] > 0) return YES;
 
-    NSRegularExpression *countRegex = [NSRegularExpression regularExpressionWithPattern:@"^[0-9,.万億kKmM]+$"
-                                                                                options:0
-                                                                                  error:nil];
+    NSRegularExpression *countRegex = [NSRegularExpression regularExpressionWithPattern:@"^[0-9,.万億kKmM]+$" options:0 error:nil];
     if ([countRegex numberOfMatchesInString:trimmed options:0 range:NSMakeRange(0, trimmed.length)] > 0) return YES;
     return NO;
+}
+
+- (BOOL)isInsidePlayerArea:(UIView *)view {
+    CGRect rect = [view convertRect:view.bounds toView:nil];
+    CGSize screen = UIScreen.mainScreen.bounds.size;
+    CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
+    BOOL portraitPlayer = (rect.origin.y < screen.height * 0.43 && rect.size.width >= screen.width * 0.65 && ratio > 1.25 && ratio < 2.6 && rect.size.height <= screen.height * 0.55);
+    BOOL fullscreenPlayer = (rect.size.width >= screen.width * 0.92 && rect.size.height >= screen.height * 0.70 && ratio > 1.2);
+    return portraitPlayer || fullscreenPlayer;
+}
+
+#pragma mark - WebView
+
+- (void)extractMessagesFromWebView:(WKWebView *)webView {
+    if ([self isInsidePlayerArea:webView]) return;
+    NSString *script = @"(function(){var text=document.body?document.body.innerText:''; if(!text){return [];} return text.split('\\n').map(function(x){return x.trim();}).filter(Boolean).slice(-80);})();";
+    [webView evaluateJavaScript:script completionHandler:^(id result, NSError *error) {
+        if (![result isKindOfClass:NSArray.class]) return;
+        NSMutableArray *items = [NSMutableArray array];
+        NSInteger y = 0;
+        for (id item in (NSArray *)result) {
+            if ([item isKindOfClass:NSString.class]) {
+                [items addObject:@{@"text": item, @"x": @0, @"y": @(y++), @"class": @"WKWebView"}];
+            }
+        }
+        [self parseVisibleTextItems:items];
+    }];
 }
 
 #pragma mark - Emit
 
 - (void)emitAuthor:(NSString *)author text:(NSString *)text {
     if (![SettingsManager shared].enabled) return;
-    NSString *line = [NSString stringWithFormat:@"%@|%@", author ?: @"", text ?: @""];
+    NSString *a = author ?: @"";
+    NSString *t = text ?: @"";
+    if (t.length == 0) return;
+    NSString *line = [NSString stringWithFormat:@"%@|%@", a, t];
     NSString *mid = [NSString stringWithFormat:@"%lu", (unsigned long)line.hash];
     if ([self.cache containsMessageId:mid]) return;
     [self.cache addMessageId:mid];
-    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:mid authorName:author ?: @"" text:text ?: @"" timestamp:NSDate.date];
+    [[DebugInspector shared] log:@"emit comment author=%@ text=%@", a, t];
+    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:mid authorName:a text:t timestamp:NSDate.date];
     [self.delegate chatAdapterDidReceiveMessage:msg];
 }
 
