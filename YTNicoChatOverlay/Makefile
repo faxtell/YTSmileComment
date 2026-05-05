@@ -10,13 +10,10 @@ TWEAK_NAME = YTNicoChatOverlay
 
 YTNicoChatOverlay_FILES = \
 	src/Tweak.xm \
-	src/NetworkHooks.xm \
 	src/NicoChatOverlayView.m \
 	src/NicoCommentLayer.m \
 	src/NicoChatMessage.m \
 	src/YouTubeChatAdapter.m \
-	src/YouTubeChatAdapter+Replay.m \
-	src/YouTubeChatAdapter+EnhancedParsing.m \
 	src/YouTubeChatAdapter+DirectFetch.m \
 	src/SettingsManager.m \
 	src/DebugInspector.m
