@@ -111,29 +111,51 @@ static const void *kCtlKey = &kCtlKey;
 }
 
 - (void)ensureFallbackOverlayAttached {
-    // Do not attach to UIWindow. A window-level fallback causes comments to appear over
-    // the status bar / Home feed chrome. If no safe player-like target exists, stay silent.
-    [[DebugInspector shared] log:@"Fallback overlay disabled; detaching overlay"];
-    [self detachOverlay];
+    if (!self.window) return;
+    CGRect bounds = self.window.bounds;
+    CGFloat safeTop = 20.0;
+    CGFloat safeBottom = 0.0;
+    if (@available(iOS 11.0, *)) {
+        safeTop = self.window.safeAreaInsets.top;
+        safeBottom = self.window.safeAreaInsets.bottom;
+    }
+
+    BOOL portrait = bounds.size.height >= bounds.size.width;
+    if (!portrait) {
+        [self detachOverlay];
+        return;
+    }
+
+    CGFloat y = MAX(safeTop + 8.0, 32.0);
+    CGFloat width = bounds.size.width;
+    CGFloat height = MIN(width * 9.0 / 16.0, bounds.size.height - y - safeBottom - 80.0);
+    if (height < 120.0) {
+        [self detachOverlay];
+        return;
+    }
+
+    CGRect frame = CGRectMake(0, y, width, height);
+    [self overlayForTargetView:self.window frame:frame];
+    [[DebugInspector shared] log:@"Attached safe portrait fallback overlay frame=%@", NSStringFromCGRect(frame)];
 }
 
 - (void)ensureOverlayAttached {
     UIView *player = [self findBestPlayerCandidateInView:self.window];
     if (!player) {
-        [[DebugInspector shared] log:@"No safe player candidate found; overlay detached"];
-        [self detachOverlay];
+        [[DebugInspector shared] log:@"No safe player candidate found; using safe portrait fallback if possible"];
+        [self ensureFallbackOverlayAttached];
         return;
     }
 
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
     if (player == overlay || [player isKindOfClass:NicoChatOverlayView.class] || [player isKindOfClass:UIControl.class] || [player isKindOfClass:UIWindow.class]) {
-        [[DebugInspector shared] log:@"Rejected unsafe player candidate %@; overlay detached", NSStringFromClass(player.class)];
-        [self detachOverlay];
+        [[DebugInspector shared] log:@"Rejected unsafe player candidate %@; using fallback", NSStringFromClass(player.class)];
+        [self ensureFallbackOverlayAttached];
         return;
     }
 
     if (overlay && (player == overlay || [player isDescendantOfView:overlay])) {
-        [self detachOverlay];
+        [self ensureFallbackOverlayAttached];
         return;
     }
 
