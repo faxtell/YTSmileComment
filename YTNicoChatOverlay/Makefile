@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = YTNicoChatOverlay
 
-YTNicoChatOverlay_FILES = src/Tweak.xm src/AutoFetchHooks.xm src/PlaybackHooks.xm src/SettingsFetchCountAddon.xm src/MoreComments.xm src/NicoChatOverlayView.m src/NicoCommentLayer.m src/NicoChatMessage.m src/YouTubeChatAdapter.m src/YouTubeChatAdapter+DirectFetchV2.m src/YTNicoSettingsViewController.m src/SettingsManager.m src/DebugInspector.m
+YTNicoChatOverlay_FILES = src/Tweak.xm src/AutoFetchHooks.xm src/PlaybackHooks.xm src/SettingsFetchCountAddon.xm src/MoreComments.xm src/OverlayTargetFix.xm src/NicoChatOverlayView.m src/NicoCommentLayer.m src/NicoChatMessage.m src/YouTubeChatAdapter.m src/YouTubeChatAdapter+DirectFetchV2.m src/YTNicoSettingsViewController.m src/SettingsManager.m src/DebugInspector.m
 
 YTNicoChatOverlay_FRAMEWORKS = UIKit Foundation QuartzCore WebKit AVFoundation CoreMedia
 YTNicoChatOverlay_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
