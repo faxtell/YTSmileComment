@@ -41,6 +41,10 @@
 
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
 
+- (void)dismissThenRun:(dispatch_block_t)block {
+    [self dismissViewControllerAnimated:YES completion:^{ if (block) block(); }];
+}
+
 - (UILabel *)label:(NSString *)text size:(CGFloat)size weight:(UIFontWeight)weight {
     UILabel *label = [UILabel new];
     label.text = text;
@@ -62,6 +66,7 @@
     [self.stack addArrangedSubview:[self label:@"コメントの流れ方や見た目を調整できます。おすすめは密度70〜85%、長持ち70〜90%です。" size:14 weight:UIFontWeightRegular]];
 
     [self addSwitch:@"コメント表示" subtitle:@"動画上のコメント表示をON/OFFします" value:s.enabled action:^(BOOL v){ [s setEnabled:v]; }];
+    [self addSwitch:@"自動取得" subtitle:@"動画を開いたときに自動でコメント取得を開始します" value:s.autoFetch action:^(BOOL v){ [s setAutoFetch:v]; }];
     [self addSwitch:@"プレミア/ライブチャットを優先" subtitle:@"通常コメントよりチャット/リプレイを優先して取得します" value:s.preferLiveChat action:^(BOOL v){ [s setPreferLiveChat:v]; }];
     [self addSwitch:@"リプレイを時刻同期" subtitle:@"チャットリプレイのtimestampUsecを使って、動画の進行に近い順序で流します" value:s.syncReplayToTimestamp action:^(BOOL v){ [s setSyncReplayToTimestamp:v]; }];
 
@@ -80,11 +85,11 @@
     __weak typeof(self) weakSelf = self;
     [self addButton:@"表示テストコメントを流す" action:^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (strongSelf.displayTestHandler) strongSelf.displayTestHandler();
+        [strongSelf dismissThenRun:^{ if (strongSelf.displayTestHandler) strongSelf.displayTestHandler(); }];
     }];
     [self addButton:@"クリップボードの動画URL/IDから取得" action:^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (strongSelf.clipboardFetchHandler) strongSelf.clipboardFetchHandler();
+        [strongSelf dismissThenRun:^{ if (strongSelf.clipboardFetchHandler) strongSelf.clipboardFetchHandler(); }];
     }];
 }
 
