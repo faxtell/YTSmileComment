@@ -1,7 +1,9 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-static const void *kYTNicoBubblePositionedKey = &kYTNicoBubblePositionedKey;
+static CFTimeInterval gYTNicoLastBubblePositionScan = 0;
+static BOOL gYTNicoBubblePositionScanQueued = NO;
+static CGSize gYTNicoLastBubbleScreenSize = {0, 0};
 
 static BOOL YTNicoStringContainsAnyForBubblePosition(NSString *s, NSArray<NSString *> *needles) {
     for (NSString *n in needles) {
@@ -61,30 +63,48 @@ static void YTNicoMoveBubbleToBottomRight(UIView *button) {
     CGFloat margin = 14.0;
     CGFloat x = superview.bounds.size.width - inset.right - margin - size.width;
     CGFloat y = superview.bounds.size.height - inset.bottom - margin - size.height;
-    // Keep it above home indicator / bottom controls a bit.
     y = MAX(inset.top + margin, y - 18.0);
 
-    CGRect target = CGRectMake(x, y, size.width, size.height);
-    if (CGRectEqualToRect(button.frame, target)) return;
+    CGRect target = CGRectIntegral(CGRectMake(x, y, size.width, size.height));
+    if (fabs(button.frame.origin.x - target.origin.x) < 1.0 && fabs(button.frame.origin.y - target.origin.y) < 1.0) return;
+
     button.hidden = NO;
-    button.alpha = MAX(button.alpha, 1.0);
-    objc_setAssociatedObject(button, kYTNicoBubblePositionedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+    button.alpha = 1.0;
+
+    // Do not animate here. Repeated layout passes made the button look like it was
+    // falling from above and also caused avoidable UI work.
+    [UIView performWithoutAnimation:^{
         button.frame = target;
-    } completion:nil];
+        [button.superview layoutIfNeeded];
+    }];
 }
 
-static void YTNicoScanMoveBubbleButtons(UIView *view) {
-    if (!view) return;
-    if (YTNicoLooksLikeBubbleButtonForPosition(view)) YTNicoMoveBubbleToBottomRight(view);
-    for (UIView *sub in view.subviews) YTNicoScanMoveBubbleButtons(sub);
+static void YTNicoScanMoveBubbleButtons(UIView *view, NSUInteger *count) {
+    if (!view || *count > 4) return;
+    if (YTNicoLooksLikeBubbleButtonForPosition(view)) {
+        YTNicoMoveBubbleToBottomRight(view);
+        (*count)++;
+    }
+    for (UIView *sub in view.subviews) YTNicoScanMoveBubbleButtons(sub, count);
 }
 
-static void YTNicoApplyBubbleButtonPosition(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        for (UIWindow *window in UIApplication.sharedApplication.windows) {
-            YTNicoScanMoveBubbleButtons(window);
-        }
+static void YTNicoApplyBubbleButtonPositionNow(void) {
+    NSUInteger moved = 0;
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        YTNicoScanMoveBubbleButtons(window, &moved);
+        if (moved > 4) break;
+    }
+}
+
+static void YTNicoApplyBubbleButtonPositionDebounced(NSTimeInterval delay) {
+    CFTimeInterval now = CACurrentMediaTime();
+    if (gYTNicoBubblePositionScanQueued) return;
+    if (now - gYTNicoLastBubblePositionScan < 0.75) return;
+    gYTNicoBubblePositionScanQueued = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gYTNicoBubblePositionScanQueued = NO;
+        gYTNicoLastBubblePositionScan = CACurrentMediaTime();
+        YTNicoApplyBubbleButtonPositionNow();
     });
 }
 
@@ -92,24 +112,25 @@ static void YTNicoApplyBubbleButtonPosition(void) {
 
 - (void)didMoveToWindow {
     %orig;
-    YTNicoApplyBubbleButtonPosition();
-}
-
-- (void)layoutSubviews {
-    %orig;
-    YTNicoApplyBubbleButtonPosition();
+    // Only run a throttled scan when views are attached. Avoid hooking layoutSubviews;
+    // that was too frequent and caused visible repeated repositioning.
+    YTNicoApplyBubbleButtonPositionDebounced(0.25);
 }
 
 %end
 
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
-        YTNicoApplyBubbleButtonPosition();
+        gYTNicoLastBubbleScreenSize = UIScreen.mainScreen.bounds.size;
+        YTNicoApplyBubbleButtonPositionDebounced(0.6);
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-            YTNicoApplyBubbleButtonPosition();
+            gYTNicoLastBubbleScreenSize = UIScreen.mainScreen.bounds.size;
+            gYTNicoLastBubblePositionScan = 0;
+            YTNicoApplyBubbleButtonPositionDebounced(0.35);
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-            YTNicoApplyBubbleButtonPosition();
+            gYTNicoLastBubblePositionScan = 0;
+            YTNicoApplyBubbleButtonPositionDebounced(0.35);
         }];
     });
 }
