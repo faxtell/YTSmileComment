@@ -9,46 +9,46 @@ fi
 
 command -v make >/dev/null || { echo "[ERROR] make not found"; exit 1; }
 
-# Theos packaging requires `dm.pl` to be visible on PATH. On GitHub Actions,
-# Theos may have it under vendor/dm.pl but not expose it as a command.
+# Theos packaging checks the internal `_THEOS_PLATFORM_DPKG_DEB` value.
+# Relying only on PATH can fail in GitHub Actions / Xcode make, so resolve dm.pl
+# to an absolute path and pass it directly to `make package`.
 prepare_dmpl() {
+  mkdir -p "${THEOS}/bin"
   export PATH="${THEOS}/bin:${THEOS}/vendor/dm.pl:${PATH}"
 
-  if command -v dm.pl >/dev/null 2>&1; then
-    echo "[INFO] dm.pl=$(command -v dm.pl)"
-    return 0
-  fi
-
-  mkdir -p "${THEOS}/bin"
-
   local candidate=""
-  if [[ -f "${THEOS}/vendor/dm.pl/dm.pl" ]]; then
+
+  if command -v dm.pl >/dev/null 2>&1; then
+    candidate="$(command -v dm.pl)"
+  elif [[ -f "${THEOS}/bin/dm.pl" ]]; then
+    candidate="${THEOS}/bin/dm.pl"
+  elif [[ -f "${THEOS}/vendor/dm.pl/dm.pl" ]]; then
     candidate="${THEOS}/vendor/dm.pl/dm.pl"
   else
     candidate="$(find "${THEOS}" -type f -name 'dm.pl' 2>/dev/null | head -n1 || true)"
   fi
 
-  if [[ -n "${candidate}" && -f "${candidate}" ]]; then
-    chmod +x "${candidate}" || true
-    ln -sf "${candidate}" "${THEOS}/bin/dm.pl"
-    export PATH="${THEOS}/bin:${PATH}"
-  fi
-
-  if ! command -v dm.pl >/dev/null 2>&1; then
+  if [[ -z "${candidate}" || ! -f "${candidate}" ]]; then
     echo "[ERROR] dm.pl not found. Checked THEOS=${THEOS}"
     echo "[DEBUG] dm.pl candidates:"
-    find "${THEOS}" -maxdepth 5 -iname '*dm*' -print 2>/dev/null || true
+    find "${THEOS}" -maxdepth 6 -iname '*dm*' -print 2>/dev/null || true
     exit 1
   fi
 
-  echo "[INFO] dm.pl=$(command -v dm.pl)"
+  chmod +x "${candidate}" || true
+  ln -sf "${candidate}" "${THEOS}/bin/dm.pl"
+  chmod +x "${THEOS}/bin/dm.pl" || true
+
+  DMPL="${THEOS}/bin/dm.pl"
+  export DMPL
+  echo "[INFO] dm.pl=${DMPL}"
 }
 
 prepare_dmpl
 
 echo "[INFO] THEOS=${THEOS}"
-make clean
-make package FINALPACKAGE=1
+make clean _THEOS_PLATFORM_DPKG_DEB="${DMPL}"
+make package FINALPACKAGE=1 _THEOS_PLATFORM_DPKG_DEB="${DMPL}"
 
 # Depending on the Theos version/configuration, packages may be written to
 # ./packages or ./.theos/packages. Prefer the normal ./packages directory but
