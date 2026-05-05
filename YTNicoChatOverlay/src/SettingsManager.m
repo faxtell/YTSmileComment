@@ -2,13 +2,24 @@
 
 NSString * const kYTNicoSettingsChangedNotification = @"com.example.ytnico.settings.changed";
 static NSString * const kDomain = @"com.example.yt-nico-chat-overlay";
+static NSString * const kDidMigrateMockDefaultOff = @"didMigrateMockDefaultOff.v2";
 
 @implementation SettingsManager {
     NSUserDefaults *_defaults;
 }
 
 + (instancetype)shared { static SettingsManager *s; static dispatch_once_t once; dispatch_once(&once, ^{ s = [SettingsManager new]; }); return s; }
-- (instancetype)init { if ((self=[super init])) { _defaults = [[NSUserDefaults alloc] initWithSuiteName:kDomain] ?: NSUserDefaults.standardUserDefaults; } return self; }
+- (instancetype)init {
+    if ((self=[super init])) {
+        _defaults = [[NSUserDefaults alloc] initWithSuiteName:kDomain] ?: NSUserDefaults.standardUserDefaults;
+        if (![_defaults boolForKey:kDidMigrateMockDefaultOff]) {
+            [_defaults setBool:NO forKey:@"mockMode"];
+            [_defaults setBool:YES forKey:kDidMigrateMockDefaultOff];
+            [_defaults synchronize];
+        }
+    }
+    return self;
+}
 
 - (void)notifyChanged { [_defaults synchronize]; [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoSettingsChangedNotification object:nil]; }
 - (void)reload { [self notifyChanged]; }
