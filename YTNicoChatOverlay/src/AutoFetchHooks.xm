@@ -39,10 +39,6 @@ static NSString *YTNicoExtractVideoIdFromString(NSString *s) {
     return @"";
 }
 
-static NSString *YTNicoExtractVideoIdFromData(NSData *data) {
-    return YTNicoExtractVideoIdFromString(YTNicoStringFromData(data));
-}
-
 static BOOL YTNicoLooksLikeWatchOpen(NSString *lowerURL, NSString *payload) {
     if ([lowerURL containsString:@"/watch?"] || [lowerURL containsString:@"youtube.com/watch"]) return YES;
     if ([lowerURL containsString:@"/youtubei/v1/next"]) return YES;
