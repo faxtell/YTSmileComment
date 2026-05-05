@@ -4,10 +4,10 @@
 #import "SettingsManager.h"
 #import "DebugInspector.h"
 
-static const void *kYTNicoStyleScrollLabelKey = &kYTNicoStyleScrollLabelKey;
-static const void *kYTNicoStyleOutlineLabelKey = &kYTNicoStyleOutlineLabelKey;
+static const NSInteger kYTNicoComingSoonTag = 940731;
+static const void *kYTNicoLiveOnlyProcessedKey = &kYTNicoLiveOnlyProcessedKey;
 
-static UILabel *YTNicoStyleLabel(NSString *text, CGFloat size, UIFontWeight weight, UIColor *color) {
+static UILabel *YTNicoLiveOnlyLabel(NSString *text, CGFloat size, UIFontWeight weight, UIColor *color) {
     UILabel *label = [UILabel new];
     label.text = text;
     label.font = [UIFont systemFontOfSize:size weight:weight];
@@ -16,28 +16,91 @@ static UILabel *YTNicoStyleLabel(NSString *text, CGFloat size, UIFontWeight weig
     return label;
 }
 
-static UIButton *YTNicoStyleButton(NSString *title) {
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    [button setTitle:title forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    button.backgroundColor = UIColor.tertiarySystemBackgroundColor;
-    button.layer.cornerRadius = 12.0;
-    button.contentEdgeInsets = UIEdgeInsetsMake(10, 12, 10, 12);
-    return button;
+static NSString *YTNicoLiveOnlyTextFromView(UIView *view, NSInteger depth) {
+    if (!view || depth > 8) return @"";
+    NSMutableString *out = [NSMutableString string];
+    if ([view isKindOfClass:UILabel.class]) {
+        NSString *t = ((UILabel *)view).text ?: @"";
+        if (t.length) [out appendFormat:@" %@", t];
+    }
+    if ([view isKindOfClass:UIButton.class]) {
+        UIButton *b = (UIButton *)view;
+        NSString *t = [b titleForState:UIControlStateNormal] ?: @"";
+        if (t.length) [out appendFormat:@" %@", t];
+    }
+    NSString *a = view.accessibilityLabel ?: @"";
+    if (a.length) [out appendFormat:@" %@", a];
+    for (UIView *sub in view.subviews) {
+        NSString *child = YTNicoLiveOnlyTextFromView(sub, depth + 1);
+        if (child.length) [out appendString:child];
+    }
+    return out;
 }
 
-%hook YTNicoSettingsViewController
+static BOOL YTNicoLiveOnlyShouldDisableCard(UIView *view) {
+    NSString *text = YTNicoLiveOnlyTextFromView(view, 0);
+    if (text.length == 0) return NO;
+    NSArray<NSString *> *needles = @[
+        @"取得コメント数",
+        @"通常コメント",
+        @"チャットリプレイ",
+        @"リプレイ",
+        @"クリップボード",
+        @"動画URL",
+        @"URL/ID",
+        @"ニコニコ風プリセット",
+        @"スクロール時間",
+        @"黒縁の強さ",
+        @"動画サイズ連動フォント",
+        @"ニコニコ風表示"
+    ];
+    for (NSString *needle in needles) {
+        if ([text rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound) return YES;
+    }
+    return NO;
+}
 
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    if ([objc_getAssociatedObject(self, @selector(ytnico_addNiconicoStyleCard)) boolValue]) return;
-    objc_setAssociatedObject(self, @selector(ytnico_addNiconicoStyleCard), @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+static void YTNicoLiveOnlyDisableControls(UIView *view) {
+    if (!view) return;
+    view.userInteractionEnabled = NO;
+    if ([view isKindOfClass:UIControl.class]) ((UIControl *)view).enabled = NO;
+    if ([view isKindOfClass:UILabel.class]) ((UILabel *)view).textColor = UIColor.tertiaryLabelColor;
+    for (UIView *sub in view.subviews) YTNicoLiveOnlyDisableControls(sub);
+}
 
-    UIStackView *stack = nil;
-    @try { stack = [self valueForKey:@"stack"]; } @catch (__unused NSException *e) {}
-    if (![stack isKindOfClass:UIStackView.class]) return;
+static void YTNicoLiveOnlyMarkComingSoon(UIView *card) {
+    if (!card || [card viewWithTag:kYTNicoComingSoonTag]) return;
+    card.alpha = 0.58;
+    card.userInteractionEnabled = NO;
+    if ([card respondsToSelector:@selector(layer)]) {
+        card.layer.borderWidth = 1.0;
+        card.layer.borderColor = UIColor.separatorColor.CGColor;
+    }
+    YTNicoLiveOnlyDisableControls(card);
 
-    SettingsManager *settings = SettingsManager.shared;
+    UILabel *badge = [UILabel new];
+    badge.tag = kYTNicoComingSoonTag;
+    badge.text = @"Coming Soon…";
+    badge.textAlignment = NSTextAlignmentCenter;
+    badge.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+    badge.textColor = UIColor.secondaryLabelColor;
+    badge.backgroundColor = [UIColor.secondarySystemBackgroundColor colorWithAlphaComponent:0.92];
+    badge.layer.cornerRadius = 10.0;
+    badge.layer.masksToBounds = YES;
+    badge.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:badge];
+    [NSLayoutConstraint activateConstraints:@[
+        [badge.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12.0],
+        [badge.topAnchor constraintEqualToAnchor:card.topAnchor constant:10.0],
+        [badge.widthAnchor constraintGreaterThanOrEqualToConstant:116.0],
+        [badge.heightAnchor constraintEqualToConstant:24.0]
+    ]];
+}
+
+static void YTNicoLiveOnlyAddNotice(UIStackView *stack) {
+    if (!stack || [objc_getAssociatedObject(stack, kYTNicoLiveOnlyProcessedKey) boolValue]) return;
+    objc_setAssociatedObject(stack, kYTNicoLiveOnlyProcessedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     UIView *card = [UIView new];
     card.backgroundColor = UIColor.secondarySystemBackgroundColor;
     card.layer.cornerRadius = 16.0;
@@ -45,7 +108,7 @@ static UIButton *YTNicoStyleButton(NSString *title) {
 
     UIStackView *box = [UIStackView new];
     box.axis = UILayoutConstraintAxisVertical;
-    box.spacing = 10.0;
+    box.spacing = 6.0;
     box.layoutMargins = UIEdgeInsetsMake(14, 14, 14, 14);
     box.layoutMarginsRelativeArrangement = YES;
     box.translatesAutoresizingMaskIntoConstraints = NO;
@@ -57,98 +120,34 @@ static UIButton *YTNicoStyleButton(NSString *title) {
         [box.bottomAnchor constraintEqualToAnchor:card.bottomAnchor]
     ]];
 
-    UIStackView *top = [UIStackView new];
-    top.axis = UILayoutConstraintAxisHorizontal;
-    top.alignment = UIStackViewAlignmentCenter;
-    [top addArrangedSubview:YTNicoStyleLabel(@"ニコニコ風表示", 16, UIFontWeightSemibold, nil)];
-    UISwitch *modeSwitch = [UISwitch new];
-    modeSwitch.on = settings.niconicoMode;
-    [modeSwitch addTarget:self action:@selector(ytnico_styleModeSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [top addArrangedSubview:modeSwitch];
-    [box addArrangedSubview:top];
-
-    [box addArrangedSubview:YTNicoStyleLabel(@"白太字＋黒縁取り、固定時間スクロール、上から順に詰めるレーン選択へ寄せます。", 12, UIFontWeightRegular, UIColor.secondaryLabelColor)];
-
-    UIButton *preset = YTNicoStyleButton(@"ニコニコ風プリセットを適用");
-    [preset addTarget:self action:@selector(ytnico_applyStylePreset) forControlEvents:UIControlEventTouchUpInside];
-    [box addArrangedSubview:preset];
-
-    UIStackView *fontRow = [UIStackView new];
-    fontRow.axis = UILayoutConstraintAxisHorizontal;
-    fontRow.alignment = UIStackViewAlignmentCenter;
-    [fontRow addArrangedSubview:YTNicoStyleLabel(@"動画サイズ連動フォント", 14, UIFontWeightMedium, nil)];
-    UISwitch *fontSwitch = [UISwitch new];
-    fontSwitch.on = settings.adaptiveFontSize;
-    [fontSwitch addTarget:self action:@selector(ytnico_adaptiveStyleSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [fontRow addArrangedSubview:fontSwitch];
-    [box addArrangedSubview:fontRow];
-
-    UILabel *scrollValue = YTNicoStyleLabel([NSString stringWithFormat:@"%.1f 秒", settings.scrollDuration], 13, UIFontWeightMedium, nil);
-    scrollValue.textAlignment = NSTextAlignmentRight;
-    UIStackView *scrollRow = [UIStackView new];
-    scrollRow.axis = UILayoutConstraintAxisHorizontal;
-    [scrollRow addArrangedSubview:YTNicoStyleLabel(@"スクロール時間", 14, UIFontWeightMedium, nil)];
-    [scrollRow addArrangedSubview:scrollValue];
-    [box addArrangedSubview:scrollRow];
-    UISlider *scrollSlider = [UISlider new];
-    scrollSlider.minimumValue = 2.5;
-    scrollSlider.maximumValue = 10.0;
-    scrollSlider.value = settings.scrollDuration;
-    objc_setAssociatedObject(scrollSlider, kYTNicoStyleScrollLabelKey, scrollValue, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [scrollSlider addTarget:self action:@selector(ytnico_styleScrollChanged:) forControlEvents:UIControlEventValueChanged];
-    [box addArrangedSubview:scrollSlider];
-
-    UILabel *outlineValue = YTNicoStyleLabel([NSString stringWithFormat:@"%.1f", settings.outlineStrength], 13, UIFontWeightMedium, nil);
-    outlineValue.textAlignment = NSTextAlignmentRight;
-    UIStackView *outlineRow = [UIStackView new];
-    outlineRow.axis = UILayoutConstraintAxisHorizontal;
-    [outlineRow addArrangedSubview:YTNicoStyleLabel(@"黒縁の強さ", 14, UIFontWeightMedium, nil)];
-    [outlineRow addArrangedSubview:outlineValue];
-    [box addArrangedSubview:outlineRow];
-    UISlider *outlineSlider = [UISlider new];
-    outlineSlider.minimumValue = 0.0;
-    outlineSlider.maximumValue = 8.0;
-    outlineSlider.value = settings.outlineStrength;
-    objc_setAssociatedObject(outlineSlider, kYTNicoStyleOutlineLabelKey, outlineValue, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [outlineSlider addTarget:self action:@selector(ytnico_styleOutlineChanged:) forControlEvents:UIControlEventValueChanged];
-    [box addArrangedSubview:outlineSlider];
-
-    [stack insertArrangedSubview:card atIndex:MIN((NSUInteger)5, stack.arrangedSubviews.count)];
+    [box addArrangedSubview:YTNicoLiveOnlyLabel(@"ライブチャット専用モード", 17, UIFontWeightSemibold, nil)];
+    [box addArrangedSubview:YTNicoLiveOnlyLabel(@"現在は安定性優先のため、通常コメントとチャットリプレイ関連の設定は無効です。リアルタイムライブチャットのみ動作します。", 12.5, UIFontWeightRegular, UIColor.secondaryLabelColor)];
+    [stack insertArrangedSubview:card atIndex:MIN((NSUInteger)1, stack.arrangedSubviews.count)];
 }
 
-%new
-- (void)ytnico_styleModeSwitchChanged:(UISwitch *)sender {
-    [SettingsManager.shared setNiconicoMode:sender.on];
-    [[DebugInspector shared] important:@"niconicoMode=%d", sender.on];
+%hook YTNicoSettingsViewController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    UIStackView *stack = nil;
+    @try { stack = [self valueForKey:@"stack"]; } @catch (__unused NSException *e) {}
+    if (![stack isKindOfClass:UIStackView.class]) return;
+
+    YTNicoLiveOnlyAddNotice(stack);
+    for (UIView *card in stack.arrangedSubviews) {
+        if (YTNicoLiveOnlyShouldDisableCard(card)) YTNicoLiveOnlyMarkComingSoon(card);
+    }
+    [[DebugInspector shared] log:@"live-only settings processed"];
 }
 
-%new
-- (void)ytnico_adaptiveStyleSwitchChanged:(UISwitch *)sender {
-    [SettingsManager.shared setAdaptiveFontSize:sender.on];
-    [[DebugInspector shared] important:@"adaptiveFontSize=%d", sender.on];
-}
-
-%new
-- (void)ytnico_styleScrollChanged:(UISlider *)slider {
-    UILabel *label = objc_getAssociatedObject(slider, kYTNicoStyleScrollLabelKey);
-    [SettingsManager.shared setScrollDuration:slider.value];
-    label.text = [NSString stringWithFormat:@"%.1f 秒", slider.value];
-}
-
-%new
-- (void)ytnico_styleOutlineChanged:(UISlider *)slider {
-    UILabel *label = objc_getAssociatedObject(slider, kYTNicoStyleOutlineLabelKey);
-    [SettingsManager.shared setOutlineStrength:slider.value];
-    [SettingsManager.shared setEnableOutline:slider.value > 0.05];
-    label.text = [NSString stringWithFormat:@"%.1f", slider.value];
-}
-
-%new
-- (void)ytnico_applyStylePreset {
-    [SettingsManager.shared applyNiconicoPreset];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"適用しました" message:@"ニコニコ風プリセットを適用しました。設定画面を開き直すと表示値も更新されます。" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+- (void)viewDidLayoutSubviews {
+    %orig;
+    UIStackView *stack = nil;
+    @try { stack = [self valueForKey:@"stack"]; } @catch (__unused NSException *e) {}
+    if (![stack isKindOfClass:UIStackView.class]) return;
+    for (UIView *card in stack.arrangedSubviews) {
+        if (YTNicoLiveOnlyShouldDisableCard(card)) YTNicoLiveOnlyMarkComingSoon(card);
+    }
 }
 
 %end
