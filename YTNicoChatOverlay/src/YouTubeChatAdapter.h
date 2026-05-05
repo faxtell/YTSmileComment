@@ -11,4 +11,5 @@
 - (void)startObservingInRootView:(UIView *)rootView;
 - (void)stopObserving;
 + (void)ingestPotentialInnertubeData:(NSData *)data request:(NSURLRequest *)request;
++ (void)ingestPotentialJSONObject:(id)object;
 @end
