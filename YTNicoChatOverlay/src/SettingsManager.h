@@ -21,6 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)syncReplayToTimestamp;
 - (BOOL)preferLiveChat;
 - (BOOL)autoFetch;
+- (NSInteger)maxFetchComments;
 
 - (void)setEnabled:(BOOL)value;
 - (void)setFontSize:(CGFloat)value;
@@ -38,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setSyncReplayToTimestamp:(BOOL)value;
 - (void)setPreferLiveChat:(BOOL)value;
 - (void)setAutoFetch:(BOOL)value;
+- (void)setMaxFetchComments:(NSInteger)value;
 - (void)reload;
 @end
 
