@@ -22,8 +22,13 @@ static NSInteger YTNicoDesiredCount(void) {
     return MAX(100, MIN(3000, v));
 }
 
-static NSInteger YTNicoPageCap(NSInteger target, NSInteger perPage) {
-    return MAX(8, MIN(80, (target / MAX(1, perPage)) + 6));
+static NSInteger YTNicoCommentPageCap(NSInteger target, NSInteger perPage) {
+    return MAX(12, MIN(80, (target / MAX(1, perPage)) + 10));
+}
+
+static NSInteger YTNicoReplayPageCap(NSInteger target, NSInteger perPage) {
+    // Replay continuations often need several pages before replayChatItemAction appears.
+    return MAX(24, MIN(120, (target / MAX(1, perPage)) + 22));
 }
 
 %hook YouTubeChatAdapter
@@ -31,7 +36,7 @@ static NSInteger YTNicoPageCap(NSInteger target, NSInteger perPage) {
 + (void)ytv2_fetchComments:(NSString *)key version:(NSString *)version token:(NSString *)token page:(NSInteger)page emitted:(NSInteger)total generation:(NSUInteger)generation {
     NSInteger target = YTNicoDesiredCount();
     NSInteger perPage = 120;
-    NSInteger cap = YTNicoPageCap(target, perPage);
+    NSInteger cap = YTNicoCommentPageCap(target, perPage);
     if (![self ytv2_gen:generation] || token.length == 0 || total >= target || page > cap) return;
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", key]];
     [self ytv2_post:url body:@{@"context":[self ytv2_context:version], @"continuation":token} completion:^(NSString *text) {
@@ -40,15 +45,17 @@ static NSInteger YTNicoPageCap(NSInteger target, NSInteger perPage) {
         NSInteger emitted = text.length ? [self ytv2_parseNormal:text max:MIN(perPage, remaining) live:NO generation:generation] : 0;
         NSInteger newTotal = total + emitted;
         NSString *next = text.length ? [self ytv2_commentToken:text] : @"";
-        [[DebugInspector shared] log:@"more comments page=%ld total=%ld target=%ld", (long)page, (long)newTotal, (long)target];
-        if (next.length > 0 && newTotal < target && page < cap) [self ytv2_fetchComments:key version:version token:next page:page+1 emitted:newTotal generation:generation];
+        [[DebugInspector shared] log:@"more comments page=%ld emitted=%ld total=%ld target=%ld cap=%ld", (long)page, (long)emitted, (long)newTotal, (long)target, (long)cap];
+        if (next.length > 0 && newTotal < target && page < cap) {
+            [self ytv2_fetchComments:key version:version token:next page:page+1 emitted:newTotal generation:generation];
+        }
     }];
 }
 
 + (void)ytv2_fetchReplay:(NSString *)key version:(NSString *)version token:(NSString *)token page:(NSInteger)page emitted:(NSInteger)total generation:(NSUInteger)generation {
     NSInteger target = YTNicoDesiredCount();
     NSInteger perPage = 220;
-    NSInteger cap = YTNicoPageCap(target, perPage);
+    NSInteger cap = YTNicoReplayPageCap(target, perPage);
     if (![self ytv2_gen:generation] || token.length == 0 || total >= target || page > cap) return;
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=%@", key]];
     [self ytv2_post:url body:@{@"context":[self ytv2_context:version], @"continuation":token} completion:^(NSString *text) {
@@ -59,9 +66,12 @@ static NSInteger YTNicoPageCap(NSInteger target, NSInteger perPage) {
         NSString *r = text.length ? [self ytv2_replayToken:text] : @"";
         NSString *l = text.length ? [self ytv2_liveToken:text] : @"";
         NSString *next = r.length ? r : l;
-        [[DebugInspector shared] log:@"more replay page=%ld total=%ld target=%ld", (long)page, (long)newTotal, (long)target];
-        if (next.length > 0 && newTotal < target && page < cap) [self ytv2_fetchReplay:key version:version token:next page:page+1 emitted:newTotal generation:generation];
-        else if (newTotal == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+        [[DebugInspector shared] log:@"more replay page=%ld emitted=%ld total=%ld target=%ld cap=%ld hasNext=%d", (long)page, (long)emitted, (long)newTotal, (long)target, (long)cap, next.length > 0];
+        if (next.length > 0 && newTotal < target && page < cap) {
+            [self ytv2_fetchReplay:key version:version token:next page:page+1 emitted:newTotal generation:generation];
+        } else if (newTotal == 0 && page >= cap) {
+            [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+        }
     }];
 }
 
