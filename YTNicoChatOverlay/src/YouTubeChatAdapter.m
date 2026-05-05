@@ -55,7 +55,7 @@
         UIView *v=queue.firstObject; [queue removeObjectAtIndex:0];
         if ([v isKindOfClass:UILabel.class]) {
             UILabel *l=(UILabel *)v;
-            if (l.text.length > 0 && ![self isIgnoredChromeText:l.text]) [arr addObject:l];
+            if (!l.hidden && l.alpha >= 0.1 && l.text.length > 0 && ![self isIgnoredChromeText:l.text]) [arr addObject:l];
         }
         [queue addObjectsFromArray:v.subviews ?: @[]];
     }
@@ -110,9 +110,18 @@
     [self emitAuthor:author text:text];
 }
 
+- (BOOL)containsBlockedWord:(NSString *)text {
+    NSArray<NSString *> *words = [SettingsManager shared].blockWords;
+    for (NSString *w in words) {
+        if (w.length > 0 && [text localizedCaseInsensitiveContainsString:w]) return YES;
+    }
+    return NO;
+}
+
 - (void)emitAuthor:(NSString *)author text:(NSString *)text {
     if (author.length == 0 || text.length == 0) return;
     if ([self isIgnoredChromeText:author] || [self isIgnoredChromeText:text]) return;
+    if ([self containsBlockedWord:author] || [self containsBlockedWord:text]) return;
     NSString *mid = [NSString stringWithFormat:@"%lu", (unsigned long)[[NSString stringWithFormat:@"%@|%@",author,text] hash]];
     if ([self.cache containsMessageId:mid]) return;
     [self.cache addMessageId:mid];

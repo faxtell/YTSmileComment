@@ -18,12 +18,19 @@ static const void *kAdapterKey = &kAdapterKey;
     if ((self=[super init])) {
         _hostVC = vc;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadSettings) name:kYTNicoSettingsChangedNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onAppDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onAppWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
         [self setupOrRefresh];
     }
     return self;
 }
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 - (void)reloadSettings { [self setupOrRefresh]; }
+- (void)onAppDidEnterBackground {
+    YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
+    [adapter stopObserving];
+}
+- (void)onAppWillEnterForeground { [self setupOrRefresh]; }
 
 - (BOOL)isVisibleCandidate:(UIView *)v {
     if (!v || v.hidden || v.alpha < 0.1 || v.bounds.size.width < 200 || v.bounds.size.height < 110) return NO;
@@ -67,7 +74,15 @@ static const void *kAdapterKey = &kAdapterKey;
 
 - (void)setupOrRefresh {
     UIView *player = [self findBestPlayerView];
-    if (!player) return;
+    if (!player) {
+        if (self.attachedPlayer) {
+            NicoChatOverlayView *old = objc_getAssociatedObject(self.attachedPlayer, kOverlayKey);
+            [old removeFromSuperview];
+            objc_setAssociatedObject(self.attachedPlayer, kOverlayKey, nil, OBJC_ASSOCIATION_ASSIGN);
+            self.attachedPlayer = nil;
+        }
+        return;
+    }
     player.clipsToBounds = YES;
 
     NicoChatOverlayView *overlay = nil;
