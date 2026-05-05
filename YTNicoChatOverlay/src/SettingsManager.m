@@ -40,6 +40,7 @@ static NSString * const kDidMigrateMockDefaultOff = @"didMigrateMockDefaultOff.v
 - (BOOL)syncReplayToTimestamp { return [_defaults objectForKey:@"syncReplayToTimestamp"] ? [_defaults boolForKey:@"syncReplayToTimestamp"] : YES; }
 - (BOOL)preferLiveChat { return [_defaults objectForKey:@"preferLiveChat"] ? [_defaults boolForKey:@"preferLiveChat"] : YES; }
 - (BOOL)autoFetch { return [_defaults objectForKey:@"autoFetch"] ? [_defaults boolForKey:@"autoFetch"] : YES; }
+- (NSInteger)maxFetchComments { return [_defaults objectForKey:@"maxFetchComments"] ? [_defaults integerForKey:@"maxFetchComments"] : 500; }
 
 - (void)setEnabled:(BOOL)value { [_defaults setBool:value forKey:@"enabled"]; [self notifyChanged]; }
 - (void)setFontSize:(CGFloat)value { [_defaults setDouble:MAX(10.0, MIN(36.0, value)) forKey:@"fontSize"]; [self notifyChanged]; }
@@ -57,4 +58,5 @@ static NSString * const kDidMigrateMockDefaultOff = @"didMigrateMockDefaultOff.v
 - (void)setSyncReplayToTimestamp:(BOOL)value { [_defaults setBool:value forKey:@"syncReplayToTimestamp"]; [self notifyChanged]; }
 - (void)setPreferLiveChat:(BOOL)value { [_defaults setBool:value forKey:@"preferLiveChat"]; [self notifyChanged]; }
 - (void)setAutoFetch:(BOOL)value { [_defaults setBool:value forKey:@"autoFetch"]; [self notifyChanged]; }
+- (void)setMaxFetchComments:(NSInteger)value { [_defaults setInteger:MAX(100, MIN(3000, value)) forKey:@"maxFetchComments"]; [self notifyChanged]; }
 @end
