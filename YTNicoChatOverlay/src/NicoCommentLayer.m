@@ -5,22 +5,42 @@
 @implementation NicoCommentLayer
 - (void)configureWithMessage:(NicoChatMessage *)message fontSize:(CGFloat)fontSize opacity:(CGFloat)opacity {
     NSString *text = message.text ?: @"";
-    if ([SettingsManager shared].showAuthorName && message.authorName.length > 0) {
+    SettingsManager *settings = [SettingsManager shared];
+    if (settings.showAuthorName && message.authorName.length > 0) {
         text = [NSString stringWithFormat:@"%@: %@", message.authorName, text];
     }
-    self.string = text;
+
+    UIColor *fillColor = message.colorHint ?: UIColor.whiteColor;
+    UIFont *font = [UIFont boldSystemFontOfSize:fontSize];
+    CGFloat strokeWidth = settings.enableOutline ? MAX(0.0, settings.outlineStrength) : 0.0;
+    NSMutableDictionary *attrs = [@{
+        NSFontAttributeName: font,
+        NSForegroundColorAttributeName: fillColor
+    } mutableCopy];
+
+    if (strokeWidth > 0.01) {
+        // Negative stroke width draws both fill and outline. This is closer to Niconico's white text + black edge.
+        attrs[NSStrokeColorAttributeName] = UIColor.blackColor;
+        attrs[NSStrokeWidthAttributeName] = @(-strokeWidth);
+    }
+
+    self.string = [[NSAttributedString alloc] initWithString:text attributes:attrs];
     self.fontSize = fontSize;
     self.contentsScale = UIScreen.mainScreen.scale;
-    self.foregroundColor = (message.colorHint ?: UIColor.whiteColor).CGColor;
+    self.foregroundColor = fillColor.CGColor;
     self.opacity = (float)opacity;
     self.alignmentMode = kCAAlignmentLeft;
-    self.truncationMode = kCATruncationEnd;
+    self.truncationMode = kCATruncationNone;
     self.wrapped = NO;
-    if ([SettingsManager shared].enableShadow) {
+    self.masksToBounds = NO;
+
+    if (settings.enableShadow) {
         self.shadowColor = UIColor.blackColor.CGColor;
-        self.shadowOpacity = 0.9;
-        self.shadowRadius = 2.0;
-        self.shadowOffset = CGSizeMake(1, 1);
+        self.shadowOpacity = settings.niconicoMode ? 0.75 : 0.9;
+        self.shadowRadius = settings.niconicoMode ? 1.0 : 2.0;
+        self.shadowOffset = settings.niconicoMode ? CGSizeMake(1.0, 1.0) : CGSizeMake(1.0, 1.0);
+    } else {
+        self.shadowOpacity = 0.0;
     }
 }
 @end
