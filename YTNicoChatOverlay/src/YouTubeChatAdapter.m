@@ -44,6 +44,16 @@ static dispatch_queue_t gParseQueue;
     if (!wantsMock && self.mockTimer) { [self.mockTimer invalidate]; self.mockTimer = nil; }
 }
 
++ (void)broadcastAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSArray *adapters = nil;
+        @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
+        for (YouTubeChatAdapter *adapter in adapters) {
+            [adapter emitAuthor:author text:text messageId:messageId];
+        }
+    });
+}
+
 + (void)ingestPotentialInnertubeData:(NSData *)data request:(NSURLRequest *)request {
     if (![data isKindOfClass:NSData.class] || data.length == 0 || data.length > 20000000) return;
     dispatch_async(gParseQueue, ^{
