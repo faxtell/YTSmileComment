@@ -64,22 +64,22 @@ static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
     [slider addTarget:self action:@selector(ytnico_fetchCountSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [stack insertArrangedSubview:card atIndex:MIN((NSUInteger)4, stack.arrangedSubviews.count)];
 
-    UILabel *developer = [UILabel new];
-    developer.text = @"開発者: 🦈";
-    developer.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    developer.textColor = UIColor.secondaryLabelColor;
-    developer.textAlignment = NSTextAlignmentCenter;
-    developer.numberOfLines = 1;
-    [stack addArrangedSubview:developer];
+    UILabel *creditText = [UILabel new];
+    creditText.text = @"クレジット";
+    creditText.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    creditText.textColor = UIColor.secondaryLabelColor;
+    creditText.textAlignment = NSTextAlignmentCenter;
+    creditText.numberOfLines = 1;
+    [stack addArrangedSubview:creditText];
 
-    UIButton *credit = [UIButton buttonWithType:UIButtonTypeSystem];
-    [credit setTitle:@"クレジット" forState:UIControlStateNormal];
-    credit.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    credit.backgroundColor = UIColor.tertiarySystemBackgroundColor;
-    credit.layer.cornerRadius = 14.0;
-    credit.contentEdgeInsets = UIEdgeInsetsMake(12, 14, 12, 14);
-    [credit addTarget:self action:@selector(ytnico_openCreditLink) forControlEvents:UIControlEventTouchUpInside];
-    [stack addArrangedSubview:credit];
+    UIButton *developerButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [developerButton setTitle:@"開発者: 🦈" forState:UIControlStateNormal];
+    developerButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    developerButton.backgroundColor = UIColor.tertiarySystemBackgroundColor;
+    developerButton.layer.cornerRadius = 14.0;
+    developerButton.contentEdgeInsets = UIEdgeInsetsMake(12, 14, 12, 14);
+    [developerButton addTarget:self action:@selector(ytnico_openCreditLink) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:developerButton];
 }
 
 %new
