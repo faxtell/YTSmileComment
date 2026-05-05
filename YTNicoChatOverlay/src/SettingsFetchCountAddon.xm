@@ -3,6 +3,7 @@
 #import <math.h>
 #import "YTNicoSettingsViewController.h"
 #import "SettingsManager.h"
+#import "DebugInspector.h"
 
 static const void *kYTNicoFetchValueLabelKey = &kYTNicoFetchValueLabelKey;
 static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
@@ -16,6 +17,7 @@ static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
     @try { stack = [self valueForKey:@"stack"]; } @catch (__unused NSException *e) {}
     if (![stack isKindOfClass:UIStackView.class]) return;
     SettingsManager *settings = SettingsManager.shared;
+
     UIView *card = [UIView new];
     card.backgroundColor = UIColor.secondarySystemBackgroundColor;
     card.layer.cornerRadius = 16.0;
@@ -64,6 +66,63 @@ static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
     [slider addTarget:self action:@selector(ytnico_fetchCountSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [stack insertArrangedSubview:card atIndex:MIN((NSUInteger)4, stack.arrangedSubviews.count)];
 
+    UIView *debugCard = [UIView new];
+    debugCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    debugCard.layer.cornerRadius = 16.0;
+    debugCard.layer.masksToBounds = YES;
+    UIStackView *debugBox = [UIStackView new];
+    debugBox.axis = UILayoutConstraintAxisVertical;
+    debugBox.spacing = 10.0;
+    debugBox.layoutMargins = UIEdgeInsetsMake(14,14,14,14);
+    debugBox.layoutMarginsRelativeArrangement = YES;
+    debugBox.translatesAutoresizingMaskIntoConstraints = NO;
+    [debugCard addSubview:debugBox];
+    [NSLayoutConstraint activateConstraints:@[
+        [debugBox.leadingAnchor constraintEqualToAnchor:debugCard.leadingAnchor],
+        [debugBox.trailingAnchor constraintEqualToAnchor:debugCard.trailingAnchor],
+        [debugBox.topAnchor constraintEqualToAnchor:debugCard.topAnchor],
+        [debugBox.bottomAnchor constraintEqualToAnchor:debugCard.bottomAnchor]
+    ]];
+
+    UIStackView *debugTop = [UIStackView new];
+    debugTop.axis = UILayoutConstraintAxisHorizontal;
+    debugTop.alignment = UIStackViewAlignmentCenter;
+    UILabel *debugTitle = [UILabel new];
+    debugTitle.text = @"デバッグログ";
+    debugTitle.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    UISwitch *debugSwitch = [UISwitch new];
+    debugSwitch.on = settings.debugLogging;
+    [debugSwitch addTarget:self action:@selector(ytnico_debugSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [debugTop addArrangedSubview:debugTitle];
+    [debugTop addArrangedSubview:debugSwitch];
+    [debugBox addArrangedSubview:debugTop];
+
+    UILabel *debugSub = [UILabel new];
+    debugSub.text = @"取得分岐・token有無・parse件数・overlay候補を記録します。修正依頼時はログをコピーして貼ってください。";
+    debugSub.numberOfLines = 0;
+    debugSub.font = [UIFont systemFontOfSize:12];
+    debugSub.textColor = UIColor.secondaryLabelColor;
+    [debugBox addArrangedSubview:debugSub];
+
+    UIButton *copyLog = [UIButton buttonWithType:UIButtonTypeSystem];
+    [copyLog setTitle:@"ログをコピー" forState:UIControlStateNormal];
+    copyLog.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    copyLog.backgroundColor = UIColor.tertiarySystemBackgroundColor;
+    copyLog.layer.cornerRadius = 12.0;
+    copyLog.contentEdgeInsets = UIEdgeInsetsMake(10, 12, 10, 12);
+    [copyLog addTarget:self action:@selector(ytnico_copyDebugLogs) forControlEvents:UIControlEventTouchUpInside];
+    [debugBox addArrangedSubview:copyLog];
+
+    UIButton *clearLog = [UIButton buttonWithType:UIButtonTypeSystem];
+    [clearLog setTitle:@"ログを消去" forState:UIControlStateNormal];
+    clearLog.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
+    clearLog.backgroundColor = UIColor.tertiarySystemBackgroundColor;
+    clearLog.layer.cornerRadius = 12.0;
+    clearLog.contentEdgeInsets = UIEdgeInsetsMake(10, 12, 10, 12);
+    [clearLog addTarget:self action:@selector(ytnico_clearDebugLogs) forControlEvents:UIControlEventTouchUpInside];
+    [debugBox addArrangedSubview:clearLog];
+    [stack addArrangedSubview:debugCard];
+
     UILabel *creditText = [UILabel new];
     creditText.text = @"クレジット";
     creditText.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
@@ -89,6 +148,30 @@ static const void *kYTNicoFetchProgressKey = &kYTNicoFetchProgressKey;
     [SettingsManager.shared setMaxFetchComments:(NSInteger)roundf(slider.value)];
     value.text = [NSString stringWithFormat:@"%.0f 件", slider.value];
     progress.progress = (slider.value - 100.0f) / 2900.0f;
+}
+
+%new
+- (void)ytnico_debugSwitchChanged:(UISwitch *)sender {
+    [SettingsManager.shared setDebugLogging:sender.on];
+    [[DebugInspector shared] important:@"debugLogging=%d", sender.on];
+}
+
+%new
+- (void)ytnico_copyDebugLogs {
+    NSString *text = DebugInspector.shared.recentLogText;
+    if (text.length == 0) text = @"YTNico debug log is empty.";
+    UIPasteboard.generalPasteboard.string = text;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"コピーしました" message:@"デバッグログをクリップボードにコピーしました。" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+%new
+- (void)ytnico_clearDebugLogs {
+    [DebugInspector.shared clearLogs];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"消去しました" message:@"デバッグログを消去しました。" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 %new
