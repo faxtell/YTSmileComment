@@ -377,13 +377,15 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     }];
     __weak typeof(self) weakSelf = self;
     [alert addAction:[UIAlertAction actionWithTitle:@"認証" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        YTNicoTutorialViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
         NSString *input = alert.textFields.firstObject.text ?: @"";
         if (YTNicoTutorialCheckLicense(input)) {
-            weakSelf->_licenseVerifiedInSession = YES;
-            weakSelf->_statusLabel.text = @"✅ 認証できました。";
-            [weakSelf goNextWithAnimation];
+            strongSelf->_licenseVerifiedInSession = YES;
+            strongSelf->_statusLabel.text = @"✅ 認証できました。";
+            [strongSelf goNextWithAnimation];
         } else {
-            [weakSelf showLicenseRequiredAlert];
+            [strongSelf showLicenseRequiredAlert];
         }
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"キャンセル" style:UIAlertActionStyleCancel handler:nil]];
