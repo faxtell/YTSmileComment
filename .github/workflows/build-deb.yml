@@ -40,10 +40,33 @@ jobs:
           brew update
           brew install ldid dpkg xz
 
-      - name: Install Theos
+      - name: Install Theos and dm.pl
         run: |
+          rm -rf "$HOME/theos"
           git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+          cd "$HOME/theos"
+          git submodule update --init --recursive
+
+          mkdir -p "$HOME/theos/bin"
+
+          # Theos normally provides dm.pl. If it is not present for any reason,
+          # install the official fallback package so `make package` can create debs.
+          if [[ ! -x "$HOME/theos/bin/dm.pl" ]]; then
+            echo "[WARN] $HOME/theos/bin/dm.pl not found; installing fallback dm.pl via npm"
+            npm install -g @theosdev/dm.pl
+            DMPL_PATH="$(command -v dm.pl || true)"
+            if [[ -z "$DMPL_PATH" ]]; then
+              echo "[ERROR] dm.pl could not be installed"
+              exit 1
+            fi
+            ln -sf "$DMPL_PATH" "$HOME/theos/bin/dm.pl"
+            chmod +x "$HOME/theos/bin/dm.pl"
+          fi
+
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
+          echo "[INFO] THEOS=$HOME/theos"
+          "$HOME/theos/bin/dm.pl" --help >/dev/null
 
       - name: Build deb package
         run: |
