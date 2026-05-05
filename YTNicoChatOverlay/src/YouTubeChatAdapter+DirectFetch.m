@@ -28,10 +28,12 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
 + (void)fetchCommentsForVideoId:(NSString *)videoId {
     videoId = [self ytdf_norm:videoId];
     if (videoId.length != 11) return;
+    [YouTubeChatAdapter resetForVideoId:videoId];
+    NSUInteger generation = [YouTubeChatAdapter currentGeneration];
     @synchronized (self) { if (YTNicoDirectFetchActive) return; YTNicoDirectFetchActive = YES; }
     YTNicoReplayBaseUsec = 0;
     YTNicoReplayStartTime = CACurrentMediaTime();
-    [[DebugInspector shared] log:@"direct fetch start videoId=%@", videoId];
+    [[DebugInspector shared] log:@"direct fetch start videoId=%@ generation=%lu", videoId, (unsigned long)generation];
 
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/watch?v=%@&hl=ja&persist_hl=1", videoId]];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
@@ -41,15 +43,17 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     [req setValue:@"ja,en-US;q=0.9,en;q=0.8" forHTTPHeaderField:@"Accept-Language"];
 
     NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
         if (error || data.length == 0) { [self ytdf_finish]; return; }
         NSString *html = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
         if (html.length == 0) { [self ytdf_finish]; return; }
-        [self ytdf_processWatchHTML:html videoId:videoId];
+        [self ytdf_processWatchHTML:html videoId:videoId generation:generation];
     }];
     [task resume];
 }
 
-+ (void)ytdf_processWatchHTML:(NSString *)html videoId:(NSString *)videoId {
++ (void)ytdf_processWatchHTML:(NSString *)html videoId:(NSString *)videoId generation:(NSUInteger)generation {
+    if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
     NSString *apiKey = [self ytdf_firstMatchIn:html patterns:@[@"\"INNERTUBE_API_KEY\"\\s*:\\s*\"([^\"]+)\"", @"\\\"INNERTUBE_API_KEY\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""]];
     NSString *clientVersion = [self ytdf_firstMatchIn:html patterns:@[@"\"INNERTUBE_CLIENT_VERSION\"\\s*:\\s*\"([^\"]+)\"", @"\\\"INNERTUBE_CLIENT_VERSION\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""]];
     if (clientVersion.length == 0) clientVersion = @"2.20250101.01.00";
@@ -58,25 +62,29 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     NSURL *nextURL = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytdf_context:clientVersion], @"videoId":videoId};
     [self ytdf_postURL:nextURL body:body completion:^(NSString *text) {
+        if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
         if (text.length == 0) { [self ytdf_finish]; return; }
 
-        BOOL liveNow = [self ytdf_isProbablyLiveNow:text];
         NSString *liveToken = [self ytdf_firstLiveContinuationTokenInString:text];
+        NSString *replayToken = [self ytdf_firstReplayContinuationTokenInString:text];
+        BOOL hasReplaySignal = [self ytdf_hasReplaySignal:text] || replayToken.length > 0;
+        BOOL liveNow = [self ytdf_isProbablyLiveNow:text];
         BOOL preferChat = SettingsManager.shared.preferLiveChat;
-        if (preferChat && liveToken.length > 0) {
-            if (liveNow) {
-                [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"ライブチャットをリアルタイム取得します" messageId:NSUUID.UUID.UUIDString];
-                [self ytdf_pollLiveChatWithKey:apiKey version:clientVersion token:liveToken poll:0];
-            } else {
+        if (preferChat && (liveToken.length > 0 || replayToken.length > 0)) {
+            if (hasReplaySignal || !liveNow) {
+                NSString *token = replayToken.length ? replayToken : liveToken;
                 [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"チャットリプレイを時刻同期で取得します" messageId:NSUUID.UUID.UUIDString];
-                [self ytdf_fetchLiveReplayWithKey:apiKey version:clientVersion token:liveToken page:0 totalEmitted:0];
+                [self ytdf_fetchLiveReplayWithKey:apiKey version:clientVersion token:token page:0 totalEmitted:0 generation:generation];
+            } else {
+                [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"ライブチャットをリアルタイム取得します" messageId:NSUUID.UUID.UUIDString];
+                [self ytdf_pollLiveChatWithKey:apiKey version:clientVersion token:liveToken poll:0 generation:generation];
             }
             return;
         }
 
-        NSInteger emitted = [self ytdf_parseResponseString:text maxCount:50 mode:0];
+        NSInteger emitted = [self ytdf_parseResponseString:text maxCount:50 mode:0 generation:generation];
         NSString *token = [self ytdf_firstCommentContinuationTokenInString:text];
-        if (token.length > 0) [self ytdf_fetchCommentContinuationWithKey:apiKey version:clientVersion token:token page:1 totalEmitted:emitted];
+        if (token.length > 0) [self ytdf_fetchCommentContinuationWithKey:apiKey version:clientVersion token:token page:1 totalEmitted:emitted generation:generation];
         else {
             if (emitted == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
             [self ytdf_finish];
@@ -89,6 +97,7 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
 }
 
 + (BOOL)ytdf_isProbablyLiveNow:(NSString *)s {
+    if ([self ytdf_hasReplaySignal:s]) return NO;
     if ([s rangeOfString:@"\"isLiveNow\":true"].location != NSNotFound) return YES;
     if ([s rangeOfString:@"\"isLive\":true"].location != NSNotFound && [s rangeOfString:@"get_live_chat_replay"].location == NSNotFound) return YES;
     if ([s rangeOfString:@"LIVE_STREAM_OFFLINE"].location != NSNotFound) return NO;
@@ -96,7 +105,16 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     return NO;
 }
 
-+ (void)ytdf_fetchCommentContinuationWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted {
++ (BOOL)ytdf_hasReplaySignal:(NSString *)s {
+    if (s.length == 0) return NO;
+    NSArray<NSString *> *signals = @[@"get_live_chat_replay", @"liveChatReplayContinuationData", @"replayContinuationData", @"\"isLiveContent\":false", @"\"isUpcoming\":false"];
+    for (NSString *sig in signals) if ([s rangeOfString:sig].location != NSNotFound) return YES;
+    if ([s rangeOfString:@"\"isLiveNow\":true"].location == NSNotFound && [s rangeOfString:@"liveChatRenderer"].location != NSNotFound) return YES;
+    return NO;
+}
+
++ (void)ytdf_fetchCommentContinuationWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted generation:(NSUInteger)generation {
+    if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
     if (page > YTNicoMaxCommentPages || token.length == 0) {
         if (totalEmitted == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
         [self ytdf_finish];
@@ -105,9 +123,10 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
     [self ytdf_postURL:url body:body completion:^(NSString *text) {
-        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:70 mode:0] : 0;
+        if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:70 mode:0 generation:generation] : 0;
         NSString *nextToken = text.length > 0 ? [self ytdf_firstCommentContinuationTokenInString:text] : @"";
-        if (nextToken.length > 0 && page < YTNicoMaxCommentPages) [self ytdf_fetchCommentContinuationWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted];
+        if (nextToken.length > 0 && page < YTNicoMaxCommentPages) [self ytdf_fetchCommentContinuationWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted generation:generation];
         else {
             if (totalEmitted + emitted == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
             [self ytdf_finish];
@@ -115,21 +134,25 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     }];
 }
 
-+ (void)ytdf_pollLiveChatWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token poll:(NSInteger)poll {
++ (void)ytdf_pollLiveChatWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token poll:(NSInteger)poll generation:(NSUInteger)generation {
+    if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
     if (poll > YTNicoMaxLivePolls || token.length == 0) { [self ytdf_finish]; return; }
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
     [self ytdf_postURL:url body:body completion:^(NSString *text) {
-        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:80 mode:1] : 0;
+        if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:80 mode:1 generation:generation] : 0;
         NSString *nextToken = text.length > 0 ? [self ytdf_firstLiveContinuationTokenInString:text] : @"";
         NSTimeInterval delay = emitted > 0 ? 2.2 : 3.5;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self ytdf_pollLiveChatWithKey:apiKey version:version token:(nextToken.length ? nextToken : token) poll:poll + 1];
+            if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
+            [self ytdf_pollLiveChatWithKey:apiKey version:version token:(nextToken.length ? nextToken : token) poll:poll + 1 generation:generation];
         });
     }];
 }
 
-+ (void)ytdf_fetchLiveReplayWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted {
++ (void)ytdf_fetchLiveReplayWithKey:(NSString *)apiKey version:(NSString *)version token:(NSString *)token page:(NSInteger)page totalEmitted:(NSInteger)totalEmitted generation:(NSUInteger)generation {
+    if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
     if (page > YTNicoMaxChatPages || token.length == 0) {
         if (totalEmitted == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
         [self ytdf_finish];
@@ -139,9 +162,10 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytdf_context:version], @"continuation":token};
     [self ytdf_postURL:url body:body completion:^(NSString *text) {
-        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:90 mode:2] : 0;
-        NSString *nextToken = text.length > 0 ? [self ytdf_firstLiveContinuationTokenInString:text] : @"";
-        if (nextToken.length > 0 && page < YTNicoMaxChatPages) [self ytdf_fetchLiveReplayWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted];
+        if (![self ytdf_isGenerationCurrent:generation]) { [self ytdf_finish]; return; }
+        NSInteger emitted = text.length > 0 ? [self ytdf_parseResponseString:text maxCount:90 mode:2 generation:generation] : 0;
+        NSString *nextToken = text.length > 0 ? ([self ytdf_firstReplayContinuationTokenInString:text].length ? [self ytdf_firstReplayContinuationTokenInString:text] : [self ytdf_firstLiveContinuationTokenInString:text]) : @"";
+        if (nextToken.length > 0 && page < YTNicoMaxChatPages) [self ytdf_fetchLiveReplayWithKey:apiKey version:version token:nextToken page:page + 1 totalEmitted:totalEmitted + emitted generation:generation];
         else {
             if (totalEmitted + emitted == 0) [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: チャットリプレイを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
             [self ytdf_finish];
@@ -170,21 +194,21 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     [task resume];
 }
 
-+ (NSInteger)ytdf_parseResponseString:(NSString *)s maxCount:(NSInteger)maxCount mode:(NSInteger)mode {
-    if (s.length == 0) return 0;
++ (NSInteger)ytdf_parseResponseString:(NSString *)s maxCount:(NSInteger)maxCount mode:(NSInteger)mode generation:(NSUInteger)generation {
+    if (s.length == 0 || ![self ytdf_isGenerationCurrent:generation]) return 0;
     __block NSInteger count = 0;
     BOOL liveNow = (mode == 1);
     BOOL replay = (mode == 2);
 
     void (^emit)(NSString *, NSString *, unsigned long long) = ^(NSString *author, NSString *text, unsigned long long timestampUsec) {
-        if (count >= maxCount) return;
+        if (count >= maxCount || ![self ytdf_isGenerationCurrent:generation]) return;
         author = [self ytdf_norm:[self ytdf_unescape:author]];
         text = [self ytdf_norm:[self ytdf_unescape:text]];
         if (text.length == 0) return;
         if (author.length == 0) author = (mode == 0) ? @"comment" : @"chat";
-        NSString *key = [NSString stringWithFormat:@"%@|%@|%llu", author, text, timestampUsec];
+        NSString *key = [NSString stringWithFormat:@"%@|%@|%llu|%lu", author, text, timestampUsec, (unsigned long)generation];
         NSString *mid = [NSString stringWithFormat:@"direct-%lu", (unsigned long)key.hash];
-        if (replay && SettingsManager.shared.syncReplayToTimestamp && timestampUsec > 0) [self ytdf_emitReplayAuthor:author text:text messageId:mid timestampUsec:timestampUsec];
+        if (replay && SettingsManager.shared.syncReplayToTimestamp && timestampUsec > 0) [self ytdf_emitReplayAuthor:author text:text messageId:mid timestampUsec:timestampUsec generation:generation];
         else if (liveNow) [YouTubeChatAdapter emitNowAuthor:author text:text messageId:mid];
         else [YouTubeChatAdapter broadcastAuthor:author text:text messageId:mid];
         count++;
@@ -208,11 +232,11 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
             emit(author, text, ts);
         }
     }
-    [[DebugInspector shared] log:@"direct parser emitted %ld mode=%ld", (long)count, (long)mode];
+    [[DebugInspector shared] log:@"direct parser emitted %ld mode=%ld generation=%lu", (long)count, (long)mode, (unsigned long)generation];
     return count;
 }
 
-+ (void)ytdf_emitReplayAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId timestampUsec:(unsigned long long)timestampUsec {
++ (void)ytdf_emitReplayAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId timestampUsec:(unsigned long long)timestampUsec generation:(NSUInteger)generation {
     @synchronized (self) {
         if (YTNicoReplayBaseUsec == 0 || timestampUsec < YTNicoReplayBaseUsec) {
             YTNicoReplayBaseUsec = timestampUsec;
@@ -222,6 +246,7 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     NSTimeInterval delay = (NSTimeInterval)((timestampUsec - YTNicoReplayBaseUsec) / 1000000.0);
     delay = MAX(0.0, MIN(delay, 1800.0));
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (![self ytdf_isGenerationCurrent:generation]) return;
         [YouTubeChatAdapter emitNowAuthor:author text:text messageId:messageId];
     });
 }
@@ -256,6 +281,17 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     return [self ytdf_firstMatchIn:s patterns:@[@"\"liveChat.*?\"continuation\"\\s*:\\s*\"([^\"]+)\"", @"\"timedContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\"", @"\"reloadContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\""]];
 }
 
++ (NSString *)ytdf_firstReplayContinuationTokenInString:(NSString *)s {
+    if (s.length == 0) return @"";
+    for (NSString *key in @[@"liveChatReplayContinuationData", @"replayContinuationData", @"liveChatContinuation"]) {
+        for (NSString *block in [self ytdf_blocksForKey:key inString:s limit:12]) {
+            NSString *token = [self ytdf_firstMatchIn:block patterns:@[@"\"continuation\"\\s*:\\s*\"([^\"]+)\"", @"\"token\"\\s*:\\s*\"([^\"]+)\""]];
+            if (token.length > 0) return token;
+        }
+    }
+    return @"";
+}
+
 + (NSString *)ytdf_firstCommentContinuationTokenInString:(NSString *)s {
     if (s.length == 0) return @"";
     for (NSString *key in @[@"commentSectionRenderer", @"itemSectionRenderer", @"continuationItemRenderer"]) {
@@ -266,6 +302,8 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
     }
     return [self ytdf_firstMatchIn:s patterns:@[@"\"continuationCommand\".*?\"token\"\\s*:\\s*\"([^\"]+)\"", @"\"nextContinuationData\".*?\"continuation\"\\s*:\\s*\"([^\"]+)\""]];
 }
+
++ (BOOL)ytdf_isGenerationCurrent:(NSUInteger)generation { return generation == [YouTubeChatAdapter currentGeneration]; }
 
 + (NSString *)ytdf_balancedObjectFromString:(NSString *)s start:(NSUInteger)start maxLength:(NSUInteger)maxLength {
     if (start >= s.length || [s characterAtIndex:start] != '{') return @"";
