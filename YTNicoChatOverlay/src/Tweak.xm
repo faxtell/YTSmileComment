@@ -260,7 +260,7 @@ static const void *kCtlKey = &kCtlKey;
     [self ensureOverlayAttached];
     [YouTubeChatAdapter resetForVideoId:videoId];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
+    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:[NSString stringWithFormat:@"コメント取得開始: %@", videoId] timestamp:NSDate.date];
     [overlay enqueueMessage:msg];
     [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
 }
