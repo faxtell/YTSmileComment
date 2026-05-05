@@ -17,6 +17,7 @@ YTNicoChatOverlay_FILES = \
 	src/YouTubeChatAdapter.m \
 	src/YouTubeChatAdapter+Replay.m \
 	src/YouTubeChatAdapter+EnhancedParsing.m \
+	src/YouTubeChatAdapter+DirectFetch.m \
 	src/SettingsManager.m \
 	src/DebugInspector.m
 
