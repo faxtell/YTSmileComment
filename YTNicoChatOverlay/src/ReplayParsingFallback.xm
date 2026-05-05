@@ -2,6 +2,9 @@
 #import "YouTubeChatAdapter.h"
 #import "DebugInspector.h"
 
+static NSMutableDictionary<NSNumber *, NSNumber *> *YTNicoRPBaseTimestampUsecByGeneration;
+static NSMutableDictionary<NSNumber *, NSNumber *> *YTNicoRPSyntheticOffsetByGeneration;
+
 static NSString *YTNicoRPFirst(NSString *s, NSArray<NSString *> *patterns) {
     if (![s isKindOfClass:NSString.class] || s.length == 0) return @"";
     for (NSString *pattern in patterns) {
@@ -105,36 +108,65 @@ static NSDictionary *YTNicoRPAuthorText(NSString *block) {
     return @{@"a":YTNicoRPUnescape(author ?: @""), @"t":YTNicoRPUnescape(text ?: @"")};
 }
 
-static unsigned long long YTNicoRPOffsetFromBlock(NSString *block, unsigned long long fallbackMs) {
+static unsigned long long YTNicoRPTimestampUsecFromBlock(NSString *block) {
+    NSString *ts = YTNicoRPFirst(block, @[
+        @"\"timestampUsec\"\\s*:\\s*\"?([0-9]+)\"?",
+        @"\"timestamp_usec\"\\s*:\\s*\"?([0-9]+)\"?",
+        @"\"timestamp\"\\s*:\\s*\"?([0-9]{13,})\"?"
+    ]);
+    if (ts.length == 0) return 0;
+    return strtoull(ts.UTF8String, NULL, 10);
+}
+
+static unsigned long long YTNicoRPNextSyntheticOffset(NSUInteger generation) {
+    if (!YTNicoRPSyntheticOffsetByGeneration) YTNicoRPSyntheticOffsetByGeneration = [NSMutableDictionary dictionary];
+    NSNumber *key = @(generation);
+    unsigned long long current = [YTNicoRPSyntheticOffsetByGeneration[key] unsignedLongLongValue];
+    YTNicoRPSyntheticOffsetByGeneration[key] = @(current + 900);
+    return current;
+}
+
+static unsigned long long YTNicoRPOffsetFromBlock(NSString *block, NSUInteger generation) {
     NSString *off = YTNicoRPFirst(block, @[
         @"\"videoOffsetTimeMsec\"\\s*:\\s*\"?([0-9]+)\"?",
         @"\"videoOffsetTimeMs\"\\s*:\\s*\"?([0-9]+)\"?",
         @"\"offsetTimeMsec\"\\s*:\\s*\"?([0-9]+)\"?",
         @"\"offsetMs\"\\s*:\\s*\"?([0-9]+)\"?"
     ]);
-    if (off.length == 0) return fallbackMs;
-    return strtoull(off.UTF8String, NULL, 10);
+    if (off.length > 0) return strtoull(off.UTF8String, NULL, 10);
+
+    unsigned long long ts = YTNicoRPTimestampUsecFromBlock(block);
+    if (ts > 0) {
+        if (!YTNicoRPBaseTimestampUsecByGeneration) YTNicoRPBaseTimestampUsecByGeneration = [NSMutableDictionary dictionary];
+        NSNumber *key = @(generation);
+        unsigned long long base = [YTNicoRPBaseTimestampUsecByGeneration[key] unsignedLongLongValue];
+        if (base == 0 || ts < base) {
+            base = ts;
+            YTNicoRPBaseTimestampUsecByGeneration[key] = @(base);
+        }
+        if (ts >= base) return (ts - base) / 1000ULL;
+    }
+
+    return YTNicoRPNextSyntheticOffset(generation);
 }
 
-static NSInteger YTNicoRPEmitRenderersFromBlock(Class cls, NSString *container, unsigned long long offsetMs, NSUInteger generation, NSInteger max, NSMutableSet<NSString *> *seen, BOOL previewAllowed, NSInteger *previewCount) {
+static NSInteger YTNicoRPEmitRenderersFromBlock(NSString *container, unsigned long long inheritedOffsetMs, NSUInteger generation, NSInteger max, NSMutableSet<NSString *> *seen) {
     NSInteger count = 0;
     NSArray *rendererKeys = @[@"liveChatTextMessageRenderer", @"liveChatPaidMessageRenderer", @"liveChatMembershipItemRenderer", @"liveChatPaidStickerRenderer", @"liveChatPlaceholderItemRenderer"];
     for (NSString *rendererKey in rendererKeys) {
-        for (NSString *block in YTNicoRPBlocks(rendererKey, container, 80)) {
+        for (NSString *block in YTNicoRPBlocks(rendererKey, container, 100)) {
             if (count >= max) return count;
             NSDictionary *p = YTNicoRPAuthorText(block);
             NSString *author = p[@"a"] ?: @"";
             NSString *text = p[@"t"] ?: @"";
             if (text.length == 0) continue;
+            unsigned long long offsetMs = YTNicoRPOffsetFromBlock(block, generation);
+            if (offsetMs == 0 && inheritedOffsetMs > 0) offsetMs = inheritedOffsetMs;
             NSString *dedup = [NSString stringWithFormat:@"%llu|%@|%@", offsetMs, author, text];
             if ([seen containsObject:dedup]) continue;
             [seen addObject:dedup];
-            NSString *mid = [NSString stringWithFormat:@"replayfb-%llu-%lu-%lu", offsetMs, (unsigned long)[dedup hash], (unsigned long)generation];
+            NSString *mid = [NSString stringWithFormat:@"replayts-%llu-%lu-%lu", offsetMs, (unsigned long)[dedup hash], (unsigned long)generation];
             [YouTubeChatAdapter queueTimedReplayAuthor:author.length ? author : @"chat" text:text messageId:mid offsetMilliseconds:offsetMs generation:generation];
-            if (previewAllowed && previewCount && *previewCount < 3 && [YouTubeChatAdapter currentPlaybackSeconds] < 0) {
-                [YouTubeChatAdapter emitNowAuthor:author.length ? author : @"chat" text:text messageId:[mid stringByAppendingString:@"-preview"]];
-                (*previewCount)++;
-            }
             count++;
         }
     }
@@ -146,53 +178,38 @@ static NSInteger YTNicoRPEmitRenderersFromBlock(Class cls, NSString *container, 
 + (NSInteger)ytv2_parseReplay:(NSString *)s max:(NSInteger)max generation:(NSUInteger)generation {
     NSInteger total = 0;
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    NSInteger previewCount = 0;
-    unsigned long long syntheticOffset = 0;
 
-    NSArray *actionKeys = @[@"replayChatItemAction", @"addChatItemAction", @"replaceChatItemAction", @"markChatItemAsDeletedAction"];
+    // Parse replay actions first. This keeps true videoOffsetTimeMsec sync when YouTube provides it.
+    NSArray *actionKeys = @[@"replayChatItemAction", @"addChatItemAction", @"replaceChatItemAction"];
     for (NSString *actionKey in actionKeys) {
-        for (NSString *action in YTNicoRPBlocks(actionKey, s, 420)) {
+        for (NSString *action in YTNicoRPBlocks(actionKey, s, 520)) {
             if (total >= max) break;
-            unsigned long long offsetMs = YTNicoRPOffsetFromBlock(action, syntheticOffset);
-            NSInteger emitted = YTNicoRPEmitRenderersFromBlock(self, action, offsetMs, generation, max - total, seen, YES, &previewCount);
-            total += emitted;
-            syntheticOffset = MAX(syntheticOffset + 900, offsetMs + 900);
+            unsigned long long offsetMs = YTNicoRPOffsetFromBlock(action, generation);
+            total += YTNicoRPEmitRenderersFromBlock(action, offsetMs, generation, max - total, seen);
         }
     }
 
+    // Premiere archives sometimes expose renderers without replayChatItemAction.
     if (total == 0) {
         for (NSString *rendererKey in @[@"liveChatTextMessageRenderer", @"liveChatPaidMessageRenderer", @"liveChatMembershipItemRenderer", @"liveChatPaidStickerRenderer"]) {
-            for (NSString *block in YTNicoRPBlocks(rendererKey, s, MIN(max, 260))) {
+            for (NSString *block in YTNicoRPBlocks(rendererKey, s, MIN(max, 360))) {
                 if (total >= max) break;
-                unsigned long long offsetMs = YTNicoRPOffsetFromBlock(block, syntheticOffset);
-                NSInteger emitted = YTNicoRPEmitRenderersFromBlock(self, block, offsetMs, generation, max - total, seen, YES, &previewCount);
-                if (emitted == 0) {
-                    NSDictionary *p = YTNicoRPAuthorText(block);
-                    NSString *author = p[@"a"] ?: @"";
-                    NSString *text = p[@"t"] ?: @"";
-                    if (text.length > 0) {
-                        NSString *dedup = [NSString stringWithFormat:@"%llu|%@|%@", offsetMs, author, text];
-                        if (![seen containsObject:dedup]) {
-                            [seen addObject:dedup];
-                            NSString *mid = [NSString stringWithFormat:@"replayfb-direct-%llu-%lu-%lu", offsetMs, (unsigned long)[dedup hash], (unsigned long)generation];
-                            [YouTubeChatAdapter queueTimedReplayAuthor:author.length ? author : @"chat" text:text messageId:mid offsetMilliseconds:offsetMs generation:generation];
-                            if (previewCount < 3 && [YouTubeChatAdapter currentPlaybackSeconds] < 0) {
-                                [YouTubeChatAdapter emitNowAuthor:author.length ? author : @"chat" text:text messageId:[mid stringByAppendingString:@"-preview"]];
-                                previewCount++;
-                            }
-                            total++;
-                            syntheticOffset = MAX(syntheticOffset + 900, offsetMs + 900);
-                        }
-                    }
-                } else {
-                    total += emitted;
-                    syntheticOffset = MAX(syntheticOffset + 900, offsetMs + 900);
-                }
+                NSDictionary *p = YTNicoRPAuthorText(block);
+                NSString *author = p[@"a"] ?: @"";
+                NSString *text = p[@"t"] ?: @"";
+                if (text.length == 0) continue;
+                unsigned long long offsetMs = YTNicoRPOffsetFromBlock(block, generation);
+                NSString *dedup = [NSString stringWithFormat:@"%llu|%@|%@", offsetMs, author, text];
+                if ([seen containsObject:dedup]) continue;
+                [seen addObject:dedup];
+                NSString *mid = [NSString stringWithFormat:@"replayts-direct-%llu-%lu-%lu", offsetMs, (unsigned long)[dedup hash], (unsigned long)generation];
+                [YouTubeChatAdapter queueTimedReplayAuthor:author.length ? author : @"chat" text:text messageId:mid offsetMilliseconds:offsetMs generation:generation];
+                total++;
             }
         }
     }
 
-    [[DebugInspector shared] important:@"replay fallback parser queued=%ld preview=%ld playback=%.2f", (long)total, (long)previewCount, [YouTubeChatAdapter currentPlaybackSeconds]];
+    [[DebugInspector shared] important:@"replay timestamp parser queued=%ld playback=%.2f base=%@ synthetic=%@", (long)total, [YouTubeChatAdapter currentPlaybackSeconds], YTNicoRPBaseTimestampUsecByGeneration[@(generation)], YTNicoRPSyntheticOffsetByGeneration[@(generation)]];
     return total;
 }
 
