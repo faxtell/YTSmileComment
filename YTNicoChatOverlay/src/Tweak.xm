@@ -5,6 +5,7 @@
 #import "YouTubeChatAdapter.h"
 #import "SettingsManager.h"
 #import "DebugInspector.h"
+#import "YTNicoSettingsViewController.h"
 
 static const void *kOverlayKey = &kOverlayKey;
 static const void *kAdapterKey = &kAdapterKey;
@@ -225,9 +226,7 @@ static const void *kCtlKey = &kCtlKey;
 }
 
 - (void)handleSettingsLongPress:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        [self presentSettingsPanelFromView:gesture.view ?: self.window];
-    }
+    if (gesture.state == UIGestureRecognizerStateBegan) [self presentSettingsPage];
 }
 
 - (UIViewController *)visiblePresenter {
@@ -259,29 +258,14 @@ static const void *kCtlKey = &kCtlKey;
     [YouTubeChatAdapter fetchCommentsForVideoId:videoId];
 }
 
-- (void)presentSettingsPanelFromView:(UIView *)sourceView {
-    SettingsManager *s = [SettingsManager shared];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"YT Nico Chat Overlay" message:@"短押し: 表示/非表示\n長押し: この設定" preferredStyle:UIAlertControllerStyleActionSheet];
-
+- (void)presentSettingsPage {
+    YTNicoSettingsViewController *vc = [YTNicoSettingsViewController new];
     __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"表示テストコメントを流す" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [weakSelf emitDisplayTestComment]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"クリップボードの動画URL/IDからコメント取得" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [weakSelf fetchCommentsFromClipboard]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:(s.enabled ? @"コメント表示をOFF" : @"コメント表示をON") style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setEnabled:!s.enabled]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:(s.showAuthorName ? @"投稿者名を非表示" : @"投稿者名を表示") style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setShowAuthorName:!s.showAuthorName]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"文字サイズ +  現在 %.0f", s.fontSize] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setFontSize:s.fontSize + 2.0]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"文字サイズ -  現在 %.0f", s.fontSize] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setFontSize:s.fontSize - 2.0]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"流れる速度 +  現在 %.0f", s.speed] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setSpeed:s.speed + 20.0]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"流れる速度 -  現在 %.0f", s.speed] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setSpeed:s.speed - 20.0]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"表示行数 +  現在 %ld", (long)s.maxLines] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setMaxLines:s.maxLines + 1]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"表示行数 -  現在 %ld", (long)s.maxLines] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setMaxLines:s.maxLines - 1]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"透明度切替  現在 %.0f%%", s.opacity * 100.0] style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { CGFloat next = s.opacity >= 0.9 ? 0.55 : (s.opacity >= 0.7 ? 0.9 : 0.75); [s setOpacity:next]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:(s.mockMode ? @"テストコメントをOFF" : @"テストコメントをON") style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [s setMockMode:!s.mockMode]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"今流れているコメントを消す" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { NicoChatOverlayView *overlay = objc_getAssociatedObject(weakSelf, kOverlayKey); [overlay clearComments]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"閉じる" style:UIAlertActionStyleCancel handler:nil]];
-
-    UIPopoverPresentationController *popover = alert.popoverPresentationController;
-    if (popover) { popover.sourceView = sourceView; popover.sourceRect = sourceView.bounds; popover.permittedArrowDirections = UIPopoverArrowDirectionAny; }
-    [[self visiblePresenter] presentViewController:alert animated:YES completion:nil];
+    vc.displayTestHandler = ^{ [weakSelf emitDisplayTestComment]; };
+    vc.clipboardFetchHandler = ^{ [weakSelf fetchCommentsFromClipboard]; };
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    [[self visiblePresenter] presentViewController:nav animated:YES completion:nil];
 }
 
 #pragma mark - Chat delegate
