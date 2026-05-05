@@ -71,18 +71,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 
 #pragma mark - Video reset / generation
 
-+ (void)resetForVideoId:(NSString *)videoId {
-    videoId = [self norm:videoId];
-    if (videoId.length != 11) return;
-    BOOL changed = NO;
-    @synchronized (self) {
-        changed = ![gCurrentVideoId isEqualToString:videoId];
-        if (!changed) return;
-        gCurrentVideoId = [videoId copy];
-        gGeneration++;
-        gCurrentPlaybackSeconds = -1.0;
-        gPlaybackUpdateWallTime = 0;
-    }
++ (void)ytnico_clearQueuesAndCaches {
     @synchronized (gPendingMessages) {
         [gPendingMessages removeAllObjects];
         [gPendingIds removeAllObjects];
@@ -95,16 +84,59 @@ static CFTimeInterval gPlaybackUpdateWallTime;
     gDrainTimer = nil;
     [gReplayTimer invalidate];
     gReplayTimer = nil;
+    gCurrentPlaybackSeconds = -1.0;
+    gPlaybackUpdateWallTime = 0;
 
     NSArray *adapters = nil;
     @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
     for (YouTubeChatAdapter *adapter in adapters) adapter.cache = [[NicoMessageLRUCache alloc] initWithCapacity:6000];
+}
 
++ (void)resetForVideoId:(NSString *)videoId {
+    videoId = [self norm:videoId];
+    if (videoId.length != 11) return;
+    BOOL changed = NO;
+    @synchronized (self) {
+        changed = ![gCurrentVideoId isEqualToString:videoId];
+        if (!changed) return;
+        gCurrentVideoId = [videoId copy];
+        gGeneration++;
+    }
+    [self ytnico_clearQueuesAndCaches];
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoClearOverlayNotification object:nil];
         [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoCurrentVideoChangedNotification object:nil userInfo:@{@"videoId": videoId}];
     });
-    [[DebugInspector shared] log:@"reset for videoId=%@ generation=%lu", videoId, (unsigned long)gGeneration];
+    [[DebugInspector shared] important:@"reset videoId=%@ generation=%lu", videoId, (unsigned long)gGeneration];
+}
+
++ (void)forceResetForVideoId:(NSString *)videoId {
+    videoId = [self norm:videoId];
+    if (videoId.length != 11) return;
+    @synchronized (self) {
+        gCurrentVideoId = [videoId copy];
+        gGeneration++;
+    }
+    [self ytnico_clearQueuesAndCaches];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoClearOverlayNotification object:nil];
+        [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoCurrentVideoChangedNotification object:nil userInfo:@{@"videoId": videoId, @"forced": @YES}];
+    });
+    [[DebugInspector shared] important:@"force reset videoId=%@ generation=%lu", videoId, (unsigned long)gGeneration];
+}
+
++ (void)clearCurrentVideoAndComments {
+    BOOL hadVideo = NO;
+    @synchronized (self) {
+        hadVideo = gCurrentVideoId.length > 0;
+        gCurrentVideoId = @"";
+        gGeneration++;
+    }
+    [self ytnico_clearQueuesAndCaches];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoClearOverlayNotification object:nil];
+    });
+    if (hadVideo) [[DebugInspector shared] important:@"cleared current video generation=%lu", (unsigned long)gGeneration];
 }
 
 + (NSString *)currentVideoId { @synchronized (self) { return [gCurrentVideoId copy] ?: @""; } }
