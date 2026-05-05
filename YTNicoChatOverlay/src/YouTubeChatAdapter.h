@@ -21,6 +21,8 @@ FOUNDATION_EXTERN NSString * const kYTNicoCurrentVideoChangedNotification;
 + (void)updateCurrentPlaybackSeconds:(double)seconds;
 + (double)currentPlaybackSeconds;
 + (void)resetForVideoId:(NSString *)videoId;
++ (void)forceResetForVideoId:(NSString *)videoId;
++ (void)clearCurrentVideoAndComments;
 + (NSString *)currentVideoId;
 + (NSUInteger)currentGeneration;
 @end
