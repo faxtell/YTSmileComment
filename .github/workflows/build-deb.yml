@@ -1,0 +1,42 @@
+name: Build YTNicoChatOverlay deb
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'YTNicoChatOverlay/**'
+      - '.github/workflows/build-deb.yml'
+  pull_request:
+    paths:
+      - 'YTNicoChatOverlay/**'
+      - '.github/workflows/build-deb.yml'
+
+jobs:
+  build:
+    runs-on: macos-14
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Theos + deps
+        run: |
+          brew update
+          brew install ldid dpkg gnu-sed make
+          ./YTNicoChatOverlay/scripts/install_theos_ci.sh
+
+      - name: Build deb
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          cd YTNicoChatOverlay
+          ./build_deb.sh
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-nico-chat-overlay-deb
+          path: YTNicoChatOverlay/.theos/packages/*.deb
+          if-no-files-found: error
