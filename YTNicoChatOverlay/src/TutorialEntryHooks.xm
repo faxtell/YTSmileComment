@@ -14,13 +14,22 @@
 
 static NSString * const kYTNicoTutorialGateDomain = @"com.example.yt-nico-chat-overlay";
 static NSString * const kYTNicoTutorialLicenseReadyKey = @"ready.v1";
+static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.until";
 static const NSInteger kYTNicoTutorialButtonTag = 950531;
 static BOOL gYTNicoTutorialPresentedThisActiveSession = NO;
 static BOOL gYTNicoTutorialObserverInstalled = NO;
 
+static NSUserDefaults *YTNicoTutorialDefaults(void) {
+    return [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialGateDomain] ?: NSUserDefaults.standardUserDefaults;
+}
+
 static BOOL YTNicoTutorialLicenseReady(void) {
-    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kYTNicoTutorialGateDomain] ?: NSUserDefaults.standardUserDefaults;
-    return [d boolForKey:kYTNicoTutorialLicenseReadyKey];
+    return [YTNicoTutorialDefaults() boolForKey:kYTNicoTutorialLicenseReadyKey];
+}
+
+static BOOL YTNicoTutorialSuppressedNow(void) {
+    NSTimeInterval until = [YTNicoTutorialDefaults() doubleForKey:kYTNicoSuppressTutorialUntilKey];
+    return until > [NSDate.date timeIntervalSince1970];
 }
 
 static UIViewController *YTNicoTopViewControllerFrom(UIViewController *vc) {
@@ -65,12 +74,17 @@ static void YTNicoPresentTutorialIfNeeded(BOOL forceBecauseUnlicensed) {
     if (licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
     if (!forceBecauseUnlicensed && licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
     if (forceBecauseUnlicensed && licensed) return;
+    if (forceBecauseUnlicensed && YTNicoTutorialSuppressedNow()) {
+        [[DebugInspector shared] log:@"tutorial presentation suppressed by cooldown"];
+        return;
+    }
     if (gYTNicoTutorialPresentedThisActiveSession && forceBecauseUnlicensed) return;
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.85 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
         BOOL nowLicensed = YTNicoTutorialLicenseReady();
         if (forceBecauseUnlicensed && nowLicensed) return;
+        if (forceBecauseUnlicensed && YTNicoTutorialSuppressedNow()) return;
         if (!forceBecauseUnlicensed && nowLicensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
         if (gYTNicoTutorialPresentedThisActiveSession && forceBecauseUnlicensed) return;
 
