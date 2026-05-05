@@ -16,4 +16,19 @@
     [[DebugInspector shared] important:@"live-only mode: replay pagination skipped"];
 }
 
++ (NSString *)ytv2_commentToken:(NSString *)text {
+    [[DebugInspector shared] important:@"live-only mode: comment token suppressed"];
+    return @"";
+}
+
++ (NSString *)ytv2_replayToken:(NSString *)text {
+    [[DebugInspector shared] important:@"live-only mode: replay token suppressed"];
+    return @"";
+}
+
++ (NSString *)ytv2_strictReplayToken:(NSString *)text {
+    [[DebugInspector shared] important:@"live-only mode: strict replay token suppressed"];
+    return @"";
+}
+
 %end
