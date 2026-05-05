@@ -9,46 +9,46 @@ fi
 
 command -v make >/dev/null || { echo "[ERROR] make not found"; exit 1; }
 
-# Theos packaging checks the internal `_THEOS_PLATFORM_DPKG_DEB` value.
-# Relying only on PATH can fail in GitHub Actions / Xcode make, so resolve dm.pl
-# to an absolute path and pass it directly to `make package`.
-prepare_dmpl() {
-  mkdir -p "${THEOS}/bin"
-  export PATH="${THEOS}/bin:${THEOS}/vendor/dm.pl:${PATH}"
+# Theos defaults to `dm.pl` for Debian packaging, but GitHub Actions can fail
+# when dm.pl is present as a submodule but not executable/visible to Xcode's make.
+# We install dpkg in the workflow, so prefer the real dpkg-deb binary and pass
+# its absolute path directly to Theos.
+prepare_packager() {
+  export PATH="/opt/homebrew/bin:/usr/local/bin:${THEOS}/bin:${THEOS}/vendor/dm.pl:${PATH}"
 
-  local candidate=""
-
-  if command -v dm.pl >/dev/null 2>&1; then
-    candidate="$(command -v dm.pl)"
-  elif [[ -f "${THEOS}/bin/dm.pl" ]]; then
-    candidate="${THEOS}/bin/dm.pl"
+  local packager=""
+  if command -v dpkg-deb >/dev/null 2>&1; then
+    packager="$(command -v dpkg-deb)"
+  elif command -v dm.pl >/dev/null 2>&1; then
+    packager="$(command -v dm.pl)"
   elif [[ -f "${THEOS}/vendor/dm.pl/dm.pl" ]]; then
-    candidate="${THEOS}/vendor/dm.pl/dm.pl"
-  else
-    candidate="$(find "${THEOS}" -type f -name 'dm.pl' 2>/dev/null | head -n1 || true)"
+    packager="${THEOS}/vendor/dm.pl/dm.pl"
+    chmod +x "${packager}" || true
+  elif [[ -f "${THEOS}/bin/dm.pl" ]]; then
+    packager="${THEOS}/bin/dm.pl"
+    chmod +x "${packager}" || true
   fi
 
-  if [[ -z "${candidate}" || ! -f "${candidate}" ]]; then
-    echo "[ERROR] dm.pl not found. Checked THEOS=${THEOS}"
+  if [[ -z "${packager}" || ! -x "${packager}" ]]; then
+    echo "[ERROR] No usable deb packager found. Need dpkg-deb or dm.pl."
+    echo "[DEBUG] PATH=${PATH}"
+    echo "[DEBUG] dpkg-deb candidates:"
+    find /opt/homebrew /usr/local -type f -name 'dpkg-deb' -print 2>/dev/null || true
     echo "[DEBUG] dm.pl candidates:"
-    find "${THEOS}" -maxdepth 6 -iname '*dm*' -print 2>/dev/null || true
+    find "${THEOS}" -maxdepth 6 -iname 'dm.pl' -print 2>/dev/null || true
     exit 1
   fi
 
-  chmod +x "${candidate}" || true
-  ln -sf "${candidate}" "${THEOS}/bin/dm.pl"
-  chmod +x "${THEOS}/bin/dm.pl" || true
-
-  DMPL="${THEOS}/bin/dm.pl"
-  export DMPL
-  echo "[INFO] dm.pl=${DMPL}"
+  PACKAGER="${packager}"
+  export PACKAGER
+  echo "[INFO] deb packager=${PACKAGER}"
 }
 
-prepare_dmpl
+prepare_packager
 
 echo "[INFO] THEOS=${THEOS}"
-make clean _THEOS_PLATFORM_DPKG_DEB="${DMPL}"
-make package FINALPACKAGE=1 _THEOS_PLATFORM_DPKG_DEB="${DMPL}"
+make clean _THEOS_PLATFORM_DPKG_DEB="${PACKAGER}"
+make package FINALPACKAGE=1 _THEOS_PLATFORM_DPKG_DEB="${PACKAGER}"
 
 # Depending on the Theos version/configuration, packages may be written to
 # ./packages or ./.theos/packages. Prefer the normal ./packages directory but
