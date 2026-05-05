@@ -12,14 +12,14 @@ static const void *kButtonKey = &kButtonKey;
 static const void *kCtlKey = &kCtlKey;
 
 @interface YTNicoController : NSObject <YouTubeChatAdapterDelegate>
-@property (nonatomic, weak) UIViewController *hostVC;
+@property (nonatomic, weak) UIWindow *window;
 @end
 
 @implementation YTNicoController
 
-- (instancetype)initWithVC:(UIViewController *)vc {
+- (instancetype)initWithWindow:(UIWindow *)window {
     if ((self = [super init])) {
-        _hostVC = vc;
+        _window = window;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadSettings) name:kYTNicoSettingsChangedNotification object:nil];
         [self setup];
     }
@@ -46,7 +46,7 @@ static const void *kCtlKey = &kCtlKey;
         dispatch_async(dispatch_get_main_queue(), ^{ [self setup]; });
         return;
     }
-    if (!self.hostVC || !self.hostVC.view || !self.hostVC.view.window) return;
+    if (!self.window || self.window.hidden || self.window.alpha < 0.05) return;
 
     [self ensureOverlayAttached];
     [self ensureToggleButton];
@@ -57,15 +57,15 @@ static const void *kCtlKey = &kCtlKey;
         adapter.delegate = self;
         objc_setAssociatedObject(self, kAdapterKey, adapter, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    [adapter startObservingInRootView:self.hostVC.view];
+    [adapter startObservingInRootView:self.window];
 }
 
 #pragma mark - Overlay
 
 - (void)ensureOverlayAttached {
-    UIView *player = [self findBestPlayerCandidateInView:self.hostVC.view];
+    UIView *player = [self findBestPlayerCandidateInView:self.window];
     if (!player) {
-        [[DebugInspector shared] log:@"No player candidate found for %@", NSStringFromClass(self.hostVC.class)];
+        [[DebugInspector shared] log:@"No player candidate found in window"];
         return;
     }
 
@@ -121,8 +121,8 @@ static const void *kCtlKey = &kCtlKey;
         CGFloat screenH = UIScreen.mainScreen.bounds.size.height;
         BOOL portraitLikePlayer = (ratio > 1.45 && ratio < 2.05 &&
                                    rect.size.width >= screenW * 0.70 &&
-                                   rect.origin.y <= screenH * 0.48);
-        BOOL fullscreenLandscapePlayer = (ratio > 1.35 && ratio < 2.25 &&
+                                   rect.origin.y <= screenH * 0.50);
+        BOOL fullscreenLandscapePlayer = (ratio > 1.35 && ratio < 2.35 &&
                                           rect.size.width >= screenW * 0.85 &&
                                           rect.size.height >= screenH * 0.45);
         if (portraitLikePlayer || fullscreenLandscapePlayer) [candidates addObject:view];
@@ -137,21 +137,21 @@ static const void *kCtlKey = &kCtlKey;
     CGFloat ratio = rect.size.width / MAX(rect.size.height, 1.0);
     CGFloat aspectDelta = fabs(ratio - (16.0 / 9.0));
     CGFloat widthScore = MIN(rect.size.width / MAX(screen.width, 1.0), 1.2) * 40.0;
-    CGFloat topBias = (rect.origin.y <= screen.height * 0.25) ? 22.0 : ((rect.origin.y <= screen.height * 0.48) ? 8.0 : -28.0);
+    CGFloat topBias = (rect.origin.y <= screen.height * 0.25) ? 22.0 : ((rect.origin.y <= screen.height * 0.50) ? 8.0 : -35.0);
     CGFloat aspectScore = MAX(0.0, 45.0 - aspectDelta * 70.0);
     CGFloat fullscreenBonus = (rect.size.width >= screen.width * 0.95 && ratio > 1.35) ? 14.0 : 0.0;
-    CGFloat clutterPenalty = view.subviews.count > 50 ? -12.0 : 0.0;
+    CGFloat clutterPenalty = view.subviews.count > 70 ? -18.0 : 0.0;
     return widthScore + topBias + aspectScore + fullscreenBonus + clutterPenalty;
 }
 
 #pragma mark - Floating controls
 
 - (void)ensureToggleButton {
-    UIView *hostView = self.hostVC.view;
+    UIWindow *hostView = self.window;
     UIButton *button = objc_getAssociatedObject(self, kButtonKey);
     if (!button) {
         button = [UIButton buttonWithType:UIButtonTypeSystem];
-        button.frame = CGRectMake(MAX(12.0, hostView.bounds.size.width - 58.0), 88.0, 44.0, 44.0);
+        button.frame = CGRectMake(MAX(12.0, hostView.bounds.size.width - 58.0), 96.0, 44.0, 44.0);
         button.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleBottomMargin;
         button.layer.cornerRadius = 22.0;
         button.layer.masksToBounds = YES;
@@ -167,8 +167,9 @@ static const void *kCtlKey = &kCtlKey;
     if (button.superview != hostView) {
         [button removeFromSuperview];
         [hostView addSubview:button];
-        [hostView bringSubviewToFront:button];
     }
+    button.frame = CGRectMake(MAX(12.0, hostView.bounds.size.width - 58.0), 96.0, 44.0, 44.0);
+    [hostView bringSubviewToFront:button];
     [self updateToggleButtonAppearance];
 }
 
@@ -189,12 +190,12 @@ static const void *kCtlKey = &kCtlKey;
 
 - (void)handleSettingsLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) {
-        [self presentSettingsPanelFromView:gesture.view ?: self.hostVC.view];
+        [self presentSettingsPanelFromView:gesture.view ?: self.window];
     }
 }
 
 - (UIViewController *)visiblePresenter {
-    UIViewController *presenter = self.hostVC;
+    UIViewController *presenter = self.window.rootViewController;
     while (presenter.presentedViewController) presenter = presenter.presentedViewController;
     return presenter;
 }
@@ -244,25 +245,26 @@ static const void *kCtlKey = &kCtlKey;
 }
 @end
 
-%hook UIViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
-    if (!self.view.window) return;
-    YTNicoController *ctl = objc_getAssociatedObject(self, kCtlKey);
+static void YTNicoEnsureControllerForWindow(UIWindow *window) {
+    if (!window || ![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
+    YTNicoController *ctl = objc_getAssociatedObject(window, kCtlKey);
     if (!ctl) {
-        ctl = [[YTNicoController alloc] initWithVC:self];
-        objc_setAssociatedObject(self, kCtlKey, ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        ctl = [[YTNicoController alloc] initWithWindow:window];
+        objc_setAssociatedObject(window, kCtlKey, ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } else {
         [ctl setup];
     }
 }
 
+%hook UIViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    YTNicoEnsureControllerForWindow(self.view.window);
+}
+
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
-    YTNicoController *ctl = objc_getAssociatedObject(self, kCtlKey);
-    [ctl setup];
+    YTNicoEnsureControllerForWindow(self.view.window);
 }
 %end
 
