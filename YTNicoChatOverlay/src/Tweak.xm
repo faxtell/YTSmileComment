@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import "NicoChatOverlayView.h"
+#import "NicoChatMessage.h"
 #import "YouTubeChatAdapter.h"
 #import "SettingsManager.h"
 #import "DebugInspector.h"
