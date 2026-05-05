@@ -17,3 +17,8 @@
 @interface YouTubeChatAdapter (Replay)
 + (void)observePotentialRequest:(NSURLRequest *)request bodyData:(NSData *)bodyData;
 @end
+
+@interface YouTubeChatAdapter (DirectFetch)
++ (NSString *)extractVideoIdFromString:(NSString *)input;
++ (void)fetchCommentsForVideoId:(NSString *)videoId;
+@end
