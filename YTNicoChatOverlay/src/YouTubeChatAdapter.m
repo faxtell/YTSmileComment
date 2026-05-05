@@ -3,11 +3,16 @@
 #import "SettingsManager.h"
 #import "DebugInspector.h"
 
+NSString * const kYTNicoClearOverlayNotification = @"com.example.ytnico.clearOverlay";
+NSString * const kYTNicoCurrentVideoChangedNotification = @"com.example.ytnico.videoChanged";
+
 static NSHashTable<YouTubeChatAdapter *> *gAdapters;
 static dispatch_queue_t gParseQueue;
 static NSMutableArray<NSDictionary *> *gPendingMessages;
 static NSMutableSet<NSString *> *gPendingIds;
 static NSTimer *gDrainTimer;
+static NSString *gCurrentVideoId;
+static NSUInteger gGeneration;
 
 @interface YouTubeChatAdapter ()
 @property (nonatomic, weak) UIView *root;
@@ -23,6 +28,8 @@ static NSTimer *gDrainTimer;
         gParseQueue = dispatch_queue_create("com.example.ytnico.parse", DISPATCH_QUEUE_SERIAL);
         gPendingMessages = [NSMutableArray array];
         gPendingIds = [NSMutableSet set];
+        gCurrentVideoId = @"";
+        gGeneration = 0;
     }
 }
 
@@ -49,6 +56,34 @@ static NSTimer *gDrainTimer;
     if (wantsMock && !self.mockTimer) self.mockTimer = [NSTimer scheduledTimerWithTimeInterval:1.4 target:self selector:@selector(emitMock) userInfo:nil repeats:YES];
     if (!wantsMock && self.mockTimer) { [self.mockTimer invalidate]; self.mockTimer = nil; }
 }
+
+#pragma mark - Video reset / generation
+
++ (void)resetForVideoId:(NSString *)videoId {
+    videoId = [self norm:videoId];
+    if (videoId.length != 11) return;
+    BOOL changed = NO;
+    @synchronized (self) {
+        changed = ![gCurrentVideoId isEqualToString:videoId];
+        if (!changed) return;
+        gCurrentVideoId = [videoId copy];
+        gGeneration++;
+    }
+    @synchronized (gPendingMessages) {
+        [gPendingMessages removeAllObjects];
+        [gPendingIds removeAllObjects];
+    }
+    [gDrainTimer invalidate];
+    gDrainTimer = nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoClearOverlayNotification object:nil];
+        [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoCurrentVideoChangedNotification object:nil userInfo:@{@"videoId": videoId}];
+    });
+    [[DebugInspector shared] log:@"reset for videoId=%@ generation=%lu", videoId, (unsigned long)gGeneration];
+}
+
++ (NSString *)currentVideoId { @synchronized (self) { return [gCurrentVideoId copy] ?: @""; } }
++ (NSUInteger)currentGeneration { @synchronized (self) { return gGeneration; } }
 
 #pragma mark - Adaptive pacing buffer
 
