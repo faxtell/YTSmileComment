@@ -9,6 +9,43 @@ fi
 
 command -v make >/dev/null || { echo "[ERROR] make not found"; exit 1; }
 
+# Theos packaging requires `dm.pl` to be visible on PATH. On GitHub Actions,
+# Theos may have it under vendor/dm.pl but not expose it as a command.
+prepare_dmpl() {
+  export PATH="${THEOS}/bin:${THEOS}/vendor/dm.pl:${PATH}"
+
+  if command -v dm.pl >/dev/null 2>&1; then
+    echo "[INFO] dm.pl=$(command -v dm.pl)"
+    return 0
+  fi
+
+  mkdir -p "${THEOS}/bin"
+
+  local candidate=""
+  if [[ -f "${THEOS}/vendor/dm.pl/dm.pl" ]]; then
+    candidate="${THEOS}/vendor/dm.pl/dm.pl"
+  else
+    candidate="$(find "${THEOS}" -type f -name 'dm.pl' 2>/dev/null | head -n1 || true)"
+  fi
+
+  if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+    chmod +x "${candidate}" || true
+    ln -sf "${candidate}" "${THEOS}/bin/dm.pl"
+    export PATH="${THEOS}/bin:${PATH}"
+  fi
+
+  if ! command -v dm.pl >/dev/null 2>&1; then
+    echo "[ERROR] dm.pl not found. Checked THEOS=${THEOS}"
+    echo "[DEBUG] dm.pl candidates:"
+    find "${THEOS}" -maxdepth 5 -iname '*dm*' -print 2>/dev/null || true
+    exit 1
+  fi
+
+  echo "[INFO] dm.pl=$(command -v dm.pl)"
+}
+
+prepare_dmpl
+
 echo "[INFO] THEOS=${THEOS}"
 make clean
 make package FINALPACKAGE=1
