@@ -13,6 +13,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)showAuthorName;
 - (BOOL)enableShadow;
 - (BOOL)enableOutline;
+- (CGFloat)outlineStrength;
+- (BOOL)niconicoMode;
+- (BOOL)adaptiveFontSize;
+- (CGFloat)scrollDuration;
 - (NSArray<NSString *> *)blockWords;
 - (BOOL)mockMode;
 - (BOOL)debugLogging;
@@ -31,6 +35,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setShowAuthorName:(BOOL)value;
 - (void)setEnableShadow:(BOOL)value;
 - (void)setEnableOutline:(BOOL)value;
+- (void)setOutlineStrength:(CGFloat)value;
+- (void)setNiconicoMode:(BOOL)value;
+- (void)setAdaptiveFontSize:(BOOL)value;
+- (void)setScrollDuration:(CGFloat)value;
 - (void)setBlockWords:(NSArray<NSString *> *)value;
 - (void)setMockMode:(BOOL)value;
 - (void)setDebugLogging:(BOOL)value;
@@ -40,6 +48,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setPreferLiveChat:(BOOL)value;
 - (void)setAutoFetch:(BOOL)value;
 - (void)setMaxFetchComments:(NSInteger)value;
+- (void)applyNiconicoPreset;
 - (void)reload;
 @end
 
