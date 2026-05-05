@@ -1,6 +1,8 @@
 #import "YouTubeChatAdapter.h"
 #import "SettingsManager.h"
 #import "DebugInspector.h"
+#import <QuartzCore/QuartzCore.h>
+#import <stdlib.h>
 
 static BOOL YTNicoDirectFetchActive = NO;
 static const NSInteger YTNicoMaxCommentPages = 8;
@@ -201,7 +203,8 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
             NSString *runs = [self ytdf_firstMatchIn:block patterns:@[@"\"contentText\".*?\"runs\"\\s*:\\s*\\[(.*?)\\]", @"\"message\".*?\"runs\"\\s*:\\s*\\[(.*?)\\]", @"\"bodyText\".*?\"runs\"\\s*:\\s*\\[(.*?)\\]"]];
             if (runs.length > 0) text = [self ytdf_textFromRunsString:runs];
             if (text.length == 0) text = [self ytdf_firstMatchIn:block patterns:@[@"\"contentText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"", @"\"commentText\"\\s*:\\s*\"([^\"]+)\"", @"\"bodyText\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\"", @"\"content\"\\s*:\\s*\"([^\"]+)\"", @"\"message\".*?\"simpleText\"\\s*:\\s*\"([^\"]+)\""]];
-            unsigned long long ts = [[self ytdf_firstMatchIn:block patterns:@[@"\"timestampUsec\"\\s*:\\s*\"?([0-9]+)\"?", @"\"timestamp\"\\s*:\\s*\"?([0-9]{6,})\"?"]] unsignedLongLongValue];
+            NSString *tsString = [self ytdf_firstMatchIn:block patterns:@[@"\"timestampUsec\"\\s*:\\s*\"?([0-9]+)\"?", @"\"timestamp\"\\s*:\\s*\"?([0-9]{6,})\"?"]];
+            unsigned long long ts = [self ytdf_unsignedLongLongFromString:tsString];
             emit(author, text, ts);
         }
     }
@@ -281,6 +284,7 @@ static CFTimeInterval YTNicoReplayStartTime = 0;
 + (NSString *)ytdf_firstMatchIn:(NSString *)s patterns:(NSArray<NSString *> *)patterns { for (NSString *pattern in patterns) { NSString *m = [self ytdf_matchFirst:s pattern:pattern]; if (m.length > 0) return m; } return @""; }
 + (NSString *)ytdf_textFromRunsString:(NSString *)runs { NSMutableString *out = [NSMutableString string]; NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\"text\"\\s*:\\s*\"([^\"]*)\"" options:0 error:nil]; for (NSTextCheckingResult *m in [re matchesInString:runs options:0 range:NSMakeRange(0, runs.length)]) if (m.numberOfRanges >= 2) [out appendString:[self ytdf_unescape:[runs substringWithRange:[m rangeAtIndex:1]]]]; return [self ytdf_norm:out]; }
 + (NSString *)ytdf_matchFirst:(NSString *)text pattern:(NSString *)pattern { NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionDotMatchesLineSeparators error:nil]; NSTextCheckingResult *m = [re firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]; if (!m || m.numberOfRanges < 2) return @""; return [text substringWithRange:[m rangeAtIndex:1]]; }
++ (unsigned long long)ytdf_unsignedLongLongFromString:(NSString *)s { if (![s isKindOfClass:NSString.class] || s.length == 0) return 0; return strtoull(s.UTF8String, NULL, 10); }
 + (NSString *)ytdf_unescape:(NSString *)s { if (![s isKindOfClass:NSString.class]) return @""; s = [s stringByReplacingOccurrencesOfString:@"\\n" withString:@" "]; s = [s stringByReplacingOccurrencesOfString:@"\\\"" withString:@"\""]; s = [s stringByReplacingOccurrencesOfString:@"\\/" withString:@"/"]; s = [s stringByReplacingOccurrencesOfString:@"\\u0026" withString:@"&"]; s = [s stringByReplacingOccurrencesOfString:@"\\u003c" withString:@"<"]; s = [s stringByReplacingOccurrencesOfString:@"\\u003e" withString:@">"]; return s; }
 + (NSString *)ytdf_norm:(id)obj { if (![obj isKindOfClass:NSString.class]) return @""; NSString *s = [(NSString *)obj stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; while ([s rangeOfString:@"  "].location != NSNotFound) s = [s stringByReplacingOccurrencesOfString:@"  " withString:@" "]; return s; }
 + (void)ytdf_finish { @synchronized (self) { YTNicoDirectFetchActive = NO; } }
