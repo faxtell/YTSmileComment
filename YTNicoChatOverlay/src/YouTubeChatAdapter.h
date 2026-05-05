@@ -2,6 +2,9 @@
 #import <UIKit/UIKit.h>
 @class NicoChatMessage;
 
+FOUNDATION_EXTERN NSString * const kYTNicoClearOverlayNotification;
+FOUNDATION_EXTERN NSString * const kYTNicoCurrentVideoChangedNotification;
+
 @protocol YouTubeChatAdapterDelegate <NSObject>
 - (void)chatAdapterDidReceiveMessage:(NicoChatMessage *)message;
 @end
@@ -14,6 +17,9 @@
 + (void)ingestPotentialJSONObject:(id)object;
 + (void)broadcastAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId;
 + (void)emitNowAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId;
++ (void)resetForVideoId:(NSString *)videoId;
++ (NSString *)currentVideoId;
++ (NSUInteger)currentGeneration;
 @end
 
 @interface YouTubeChatAdapter (Replay)
