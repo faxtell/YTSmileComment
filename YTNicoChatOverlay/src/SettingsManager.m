@@ -35,6 +35,10 @@ static NSString * const kDidMigrateMockDefaultOff = @"didMigrateMockDefaultOff.v
 - (NSArray<NSString *> *)blockWords { NSArray *v = [_defaults arrayForKey:@"blockWords"]; return v ?: @[]; }
 - (BOOL)mockMode { return [_defaults objectForKey:@"mockMode"] ? [_defaults boolForKey:@"mockMode"] : NO; }
 - (BOOL)debugLogging { return [_defaults objectForKey:@"debugLogging"] ? [_defaults boolForKey:@"debugLogging"] : NO; }
+- (CGFloat)commentDensity { return [_defaults objectForKey:@"commentDensity"] ? [_defaults doubleForKey:@"commentDensity"] : 0.72; }
+- (CGFloat)longevity { return [_defaults objectForKey:@"longevity"] ? [_defaults doubleForKey:@"longevity"] : 0.78; }
+- (BOOL)syncReplayToTimestamp { return [_defaults objectForKey:@"syncReplayToTimestamp"] ? [_defaults boolForKey:@"syncReplayToTimestamp"] : YES; }
+- (BOOL)preferLiveChat { return [_defaults objectForKey:@"preferLiveChat"] ? [_defaults boolForKey:@"preferLiveChat"] : YES; }
 
 - (void)setEnabled:(BOOL)value { [_defaults setBool:value forKey:@"enabled"]; [self notifyChanged]; }
 - (void)setFontSize:(CGFloat)value { [_defaults setDouble:MAX(10.0, MIN(36.0, value)) forKey:@"fontSize"]; [self notifyChanged]; }
@@ -47,4 +51,8 @@ static NSString * const kDidMigrateMockDefaultOff = @"didMigrateMockDefaultOff.v
 - (void)setBlockWords:(NSArray<NSString *> *)value { [_defaults setObject:value ?: @[] forKey:@"blockWords"]; [self notifyChanged]; }
 - (void)setMockMode:(BOOL)value { [_defaults setBool:value forKey:@"mockMode"]; [self notifyChanged]; }
 - (void)setDebugLogging:(BOOL)value { [_defaults setBool:value forKey:@"debugLogging"]; [self notifyChanged]; }
+- (void)setCommentDensity:(CGFloat)value { [_defaults setDouble:MAX(0.1, MIN(1.0, value)) forKey:@"commentDensity"]; [self notifyChanged]; }
+- (void)setLongevity:(CGFloat)value { [_defaults setDouble:MAX(0.1, MIN(1.0, value)) forKey:@"longevity"]; [self notifyChanged]; }
+- (void)setSyncReplayToTimestamp:(BOOL)value { [_defaults setBool:value forKey:@"syncReplayToTimestamp"]; [self notifyChanged]; }
+- (void)setPreferLiveChat:(BOOL)value { [_defaults setBool:value forKey:@"preferLiveChat"]; [self notifyChanged]; }
 @end
