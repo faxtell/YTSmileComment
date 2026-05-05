@@ -59,9 +59,8 @@ static NSTimer *gDrainTimer;
     if (text.length == 0) return;
     if (messageId.length == 0) messageId = [NSString stringWithFormat:@"direct-%lu", (unsigned long)[[NSString stringWithFormat:@"%@|%@", author, text] hash]];
 
-    // Status messages should appear immediately. Real comments are paced.
     if ([author isEqualToString:@"YTNico"]) {
-        [self ytnico_emitAuthorNow:author text:text messageId:messageId];
+        [self emitNowAuthor:author text:text messageId:messageId];
         return;
     }
 
@@ -70,8 +69,8 @@ static NSTimer *gDrainTimer;
             if ([gPendingIds containsObject:messageId]) return;
             [gPendingIds addObject:messageId];
             [gPendingMessages addObject:@{@"a":author ?: @"", @"t":text, @"i":messageId}];
-            if (gPendingMessages.count > 1200) {
-                NSUInteger removeCount = MIN((NSUInteger)200, gPendingMessages.count);
+            if (gPendingMessages.count > 1800) {
+                NSUInteger removeCount = MIN((NSUInteger)300, gPendingMessages.count);
                 for (NSUInteger i = 0; i < removeCount; i++) {
                     NSDictionary *old = gPendingMessages.firstObject;
                     if (old[@"i"]) [gPendingIds removeObject:old[@"i"]];
@@ -81,6 +80,10 @@ static NSTimer *gDrainTimer;
         }
         [self ytnico_ensureDrainTimer];
     });
+}
+
++ (void)emitNowAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
+    [self ytnico_emitAuthorNow:author text:text messageId:messageId];
 }
 
 + (void)ytnico_emitAuthorNow:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
@@ -94,19 +97,26 @@ static NSTimer *gDrainTimer;
 }
 
 + (NSTimeInterval)ytnico_intervalForPendingCount:(NSUInteger)count {
-    if (count >= 500) return 0.75;
-    if (count >= 250) return 1.05;
-    if (count >= 120) return 1.35;
-    if (count >= 60) return 1.9;
-    if (count >= 25) return 2.8;
-    if (count >= 8) return 4.0;
-    return 6.0;
+    SettingsManager *s = SettingsManager.shared;
+    CGFloat density = MAX(0.1, MIN(1.0, s.commentDensity));
+    CGFloat longevity = MAX(0.1, MIN(1.0, s.longevity));
+    NSTimeInterval base = 6.5;
+    if (count >= 700) base = 0.7;
+    else if (count >= 500) base = 0.9;
+    else if (count >= 250) base = 1.25;
+    else if (count >= 120) base = 1.75;
+    else if (count >= 60) base = 2.5;
+    else if (count >= 25) base = 3.6;
+    else if (count >= 8) base = 5.0;
+    NSTimeInterval densityFactor = 1.35 - density * 0.65;
+    NSTimeInterval longevityFactor = 0.65 + longevity * 0.95;
+    return MAX(0.45, MIN(9.0, base * densityFactor * longevityFactor));
 }
 
 + (void)ytnico_ensureDrainTimer {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (gDrainTimer && gDrainTimer.valid) return;
-        gDrainTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(ytnico_drainTick) userInfo:nil repeats:NO];
+        gDrainTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 target:self selector:@selector(ytnico_drainTick) userInfo:nil repeats:NO];
     });
 }
 
@@ -128,9 +138,11 @@ static NSTimer *gDrainTimer;
     NSMutableArray<NSDictionary *> *batch = [NSMutableArray array];
     @synchronized (gPendingMessages) {
         NSUInteger count = gPendingMessages.count;
+        CGFloat density = MAX(0.1, MIN(1.0, SettingsManager.shared.commentDensity));
         NSUInteger burst = 1;
-        if (count >= 500) burst = 3;
-        else if (count >= 180) burst = 2;
+        if (count >= 700 && density > 0.72) burst = 4;
+        else if (count >= 450 && density > 0.58) burst = 3;
+        else if (count >= 180 && density > 0.48) burst = 2;
         for (NSUInteger i = 0; i < burst && gPendingMessages.count > 0; i++) {
             NSDictionary *m = gPendingMessages.firstObject;
             [batch addObject:m];
@@ -139,15 +151,11 @@ static NSTimer *gDrainTimer;
         }
     }
 
-    for (NSDictionary *m in batch) {
-        [self ytnico_emitAuthorNow:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
-    }
+    for (NSDictionary *m in batch) [self ytnico_emitAuthorNow:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
     [self ytnico_scheduleNextDrain];
 }
 
-+ (NSUInteger)pendingMessageCount {
-    @synchronized (gPendingMessages) { return gPendingMessages.count; }
-}
++ (NSUInteger)pendingMessageCount { @synchronized (gPendingMessages) { return gPendingMessages.count; } }
 
 #pragma mark - Legacy JSON parser entrypoints
 
@@ -165,30 +173,19 @@ static NSTimer *gDrainTimer;
         NSMutableArray<NSDictionary *> *messages = [NSMutableArray array];
         [self collect:object into:messages depth:0];
         if (messages.count == 0) return;
-        for (NSDictionary *m in messages) {
-            [self broadcastAuthor:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
-        }
+        for (NSDictionary *m in messages) [self broadcastAuthor:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
     });
 }
 
 + (void)collect:(id)obj into:(NSMutableArray<NSDictionary *> *)messages depth:(NSInteger)depth {
     if (!obj || depth > 80 || messages.count > 600) return;
-    if ([obj isKindOfClass:NSArray.class]) {
-        for (id x in (NSArray *)obj) [self collect:x into:messages depth:depth + 1];
-        return;
-    }
+    if ([obj isKindOfClass:NSArray.class]) { for (id x in (NSArray *)obj) [self collect:x into:messages depth:depth + 1]; return; }
     if (![obj isKindOfClass:NSDictionary.class]) return;
     NSDictionary *d = (NSDictionary *)obj;
-
     NSDictionary *c = d[@"commentRenderer"];
     if ([c isKindOfClass:NSDictionary.class]) [self addComment:c into:messages];
-
     NSArray *keys = @[@"liveChatTextMessageRenderer", @"liveChatPaidMessageRenderer", @"liveChatPaidStickerRenderer", @"liveChatMembershipItemRenderer"];
-    for (NSString *k in keys) {
-        NSDictionary *r = d[k];
-        if ([r isKindOfClass:NSDictionary.class]) [self addLive:r key:k into:messages];
-    }
-
+    for (NSString *k in keys) { NSDictionary *r = d[k]; if ([r isKindOfClass:NSDictionary.class]) [self addLive:r key:k into:messages]; }
     for (id v in d.allValues) [self collect:v into:messages depth:depth + 1];
 }
 
@@ -222,11 +219,7 @@ static NSTimer *gDrainTimer;
 + (NSString *)text:(id)o {
     if ([o isKindOfClass:NSString.class]) return o;
     if ([o isKindOfClass:NSNumber.class]) return [(NSNumber *)o stringValue];
-    if ([o isKindOfClass:NSArray.class]) {
-        NSMutableString *s = [NSMutableString string];
-        for (id x in (NSArray *)o) [s appendString:[self text:x] ?: @""];
-        return s;
-    }
+    if ([o isKindOfClass:NSArray.class]) { NSMutableString *s = [NSMutableString string]; for (id x in (NSArray *)o) [s appendString:[self text:x] ?: @""]; return s; }
     if (![o isKindOfClass:NSDictionary.class]) return @"";
     NSDictionary *d = (NSDictionary *)o;
     if ([d[@"simpleText"] isKindOfClass:NSString.class]) return d[@"simpleText"];
