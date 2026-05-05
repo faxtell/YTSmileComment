@@ -53,8 +53,6 @@
     NSInteger byHeight = MAX(1, (NSInteger)floor(usableHeight / MAX(laneHeight, 1.0)));
     NSInteger settingMax = MAX(1, [SettingsManager shared].maxLines);
 
-    // Use the video area well, but respect user maxLines. If the overlay is tall and the user left maxLines low,
-    // allow at least a few lanes so comments do not collapse into one row.
     NSInteger minimumPractical = CGRectGetHeight(self.bounds) >= font * 4.0 ? MIN(4, byHeight) : 1;
     NSInteger wanted = MIN(byHeight, MAX(settingMax, minimumPractical));
     return MAX(1, wanted);
@@ -95,32 +93,30 @@
     if (self.laneAvailableAt.count == 0) return NSNotFound;
 
     CFTimeInterval now = CACurrentMediaTime();
-    NSInteger bestIndex = 0;
-    CFTimeInterval bestAvailable = DBL_MAX;
-    NSMutableArray<NSNumber *> *freeLanes = [NSMutableArray array];
+    NSInteger selectedIndex = 0;
+    CFTimeInterval earliestAvailable = DBL_MAX;
 
+    // Niconico-style: fill from the top lane downward.
+    // Use the first lane that is already safe, instead of randomly spreading comments.
     for (NSInteger i = 0; i < self.laneAvailableAt.count; i++) {
         CFTimeInterval availableAt = self.laneAvailableAt[i].doubleValue;
-        if (availableAt <= now) [freeLanes addObject:@(i)];
-        if (availableAt < bestAvailable) {
-            bestAvailable = availableAt;
-            bestIndex = i;
+        if (availableAt <= now) {
+            selectedIndex = i;
+            earliestAvailable = availableAt;
+            break;
         }
-    }
-
-    if (freeLanes.count > 0) {
-        // Spread comments visually instead of always choosing lane 0.
-        NSUInteger pick = arc4random_uniform((uint32_t)freeLanes.count);
-        bestIndex = [freeLanes[pick] integerValue];
+        if (availableAt < earliestAvailable) {
+            earliestAvailable = availableAt;
+            selectedIndex = i;
+        }
     }
 
     CGFloat gap = 42.0;
     CFTimeInterval nextAvailable = now + ((width + gap) / MAX(speed, 1.0));
-    // If all lanes are busy, still choose the earliest lane but push its next-available time forward.
-    CFTimeInterval laneCurrent = self.laneAvailableAt[bestIndex].doubleValue;
+    CFTimeInterval laneCurrent = self.laneAvailableAt[selectedIndex].doubleValue;
     if (laneCurrent > now) nextAvailable = laneCurrent + ((width + gap) / MAX(speed, 1.0));
-    self.laneAvailableAt[bestIndex] = @(nextAvailable);
-    return bestIndex;
+    self.laneAvailableAt[selectedIndex] = @(nextAvailable);
+    return selectedIndex;
 }
 
 - (NSString *)renderedTextForMessage:(NicoChatMessage *)message {
