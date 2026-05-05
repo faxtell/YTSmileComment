@@ -31,14 +31,6 @@
     return @"";
 }
 
-+ (void)broadcastAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
-    if ([author isEqualToString:@"YTNico"]) {
-        %orig(author, text, messageId);
-        return;
-    }
-    [[DebugInspector shared] log:@"live-only mode: buffered non-live output suppressed"];
-}
-
 + (void)queueTimedReplayAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId offsetMilliseconds:(unsigned long long)offsetMilliseconds generation:(NSUInteger)generation {
     [[DebugInspector shared] log:@"live-only mode: timed replay output suppressed"];
 }
