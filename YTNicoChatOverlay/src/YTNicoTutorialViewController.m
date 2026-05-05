@@ -5,7 +5,7 @@ static NSString * const kYTNicoTutorialShownKey = @"tutorial.shown.v1";
 static NSString * const kYTNicoLicenseReadyKey = @"ready.v1";
 static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.until";
 
-@interface YTNicoTutorialViewController : UIViewController
+@interface YTNicoTutorialViewController : UIViewController <UITextFieldDelegate>
 + (BOOL)shouldShowTutorial;
 + (void)markTutorialShown;
 @end
@@ -17,18 +17,21 @@ static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.un
     NSArray<NSDictionary *> *_pages;
     NSInteger _index;
     BOOL _licenseVerifiedInSession;
+
     UILabel *_icon;
     UIView *_iconBackground;
     UILabel *_titleLabel;
     UILabel *_bodyLabel;
     UIStackView *_tipsStack;
-    UIStackView *_actionStack;
+    UIStackView *_specialStack;
+
     UIButton *_followButton;
     UIButton *_requestButton;
     UITextField *_licenseField;
-    UIButton *_licenseVisibilityButton;
+    UIButton *_licenseVerifyButton;
     UILabel *_licenseHintLabel;
     UILabel *_statusLabel;
+
     UIButton *_backButton;
     UIButton *_nextButton;
     UIButton *_skipButton;
@@ -84,8 +87,8 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
         @{@"kind":@"intro", @"accent":UIColor.systemRedColor, @"icon":@"📺", @"title":@"ようこそ", @"body":@"YouTubeのライブチャットを、動画上にニコニコ風で流せます。\n\n現在は安定性優先のライブチャット専用モードです。", @"tips":@[@"ライブ配信のリアルタイムチャットに対応", @"通常コメントとリプレイは Coming Soon…", @"動画の上にコメントが流れます"]},
         @{@"kind":@"usage", @"accent":UIColor.systemBlueColor, @"icon":@"💬", @"title":@"使い方", @"body":@"ライブ配信を開くと、リアルタイムチャットの取得を試します。\n\n自動取得できない場合は、手動取得も使えます。", @"tips":@[@"ライブ配信を開く", @"吹き出しボタンでON/OFF", @"自動取得できない時は共有ボタンからリンクをコピー", @"その後、吹き出しボタンから手動でコメント取得"]},
         @{@"kind":@"settings", @"accent":UIColor.systemPurpleColor, @"icon":@"🎨", @"title":@"設定", @"body":@"設定は2列のカテゴリに整理されています。\n\n必要な項目だけをすぐに見つけられるようにしています。", @"tips":@[@"🎨 表示 = 文字や投稿者名", @"📡 ライブチャット = 取得まわり", @"🛠️ 操作/デバッグ = ログ確認", @"🚧 Coming Soon… = 今後追加予定"]},
-        @{@"kind":@"request", @"accent":UIColor.systemTealColor, @"icon":@"🦈", @"title":@"ライセンスの受け取り", @"body":@"利用にはライセンスが必要です。\n\n下の手順で申請してください。", @"tips":@[@"開発者をフォロー", @"ライセンスを申請", @"受け取ったキーを次のページで入力"]},
-        @{@"kind":@"license", @"accent":UIColor.systemOrangeColor, @"icon":@"🔑", @"title":@"ライセンス認証", @"body":@"受け取ったライセンスキーを入力してください。\n\n認証が完了するまで、このページから先には進めません。", @"tips":@[@"キー入力後、ライセンス認証を押してください", @"まだ持っていない場合は戻って申請してください"]},
+        @{@"kind":@"request", @"accent":UIColor.systemTealColor, @"icon":@"🦈", @"title":@"ライセンスを受け取る", @"body":@"ライセンスを持っていない場合は、下の2つの手順を進めてください。", @"tips":@[]},
+        @{@"kind":@"license", @"accent":UIColor.systemOrangeColor, @"icon":@"🔑", @"title":@"ライセンス認証", @"body":@"受け取ったライセンスキーを入力してください。\n\n認証が完了するまで、このページから先には進めません。", @"tips":@[]},
         @{@"kind":@"start", @"accent":UIColor.systemGreenColor, @"icon":@"🚀", @"title":@"さぁ、はじめよう", @"body":@"準備が完了しました。\n\nこのボタンを押すと機能が有効になり、ライブチャット表示を利用できます。", @"tips":@[@"✅ ライセンス認証済み", @"✅ ライブチャット専用モード", @"✅ 自動取得ON", @"✅ 困った時は操作/デバッグへ"]}
     ];
 
@@ -167,46 +170,14 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     [_stack addArrangedSubview:_tipsStack];
     [_tipsStack.widthAnchor constraintEqualToAnchor:_stack.widthAnchor constant:-8].active = YES;
 
-    _actionStack = [UIStackView new];
-    _actionStack.axis = UILayoutConstraintAxisVertical;
-    _actionStack.alignment = UIStackViewAlignmentCenter;
-    _actionStack.spacing = 10.0;
-    [_stack addArrangedSubview:_actionStack];
-    [_actionStack.widthAnchor constraintEqualToAnchor:_stack.widthAnchor constant:-8].active = YES;
+    _specialStack = [UIStackView new];
+    _specialStack.axis = UILayoutConstraintAxisVertical;
+    _specialStack.alignment = UIStackViewAlignmentFill;
+    _specialStack.spacing = 12.0;
+    [_stack addArrangedSubview:_specialStack];
+    [_specialStack.widthAnchor constraintEqualToAnchor:_stack.widthAnchor constant:-8].active = YES;
 
-    _followButton = [self actionButtonWithTitle:@"🦈 開発者をフォロー" subtitle:nil];
-    [_followButton addTarget:self action:@selector(openDeveloper) forControlEvents:UIControlEventTouchUpInside];
-    [_actionStack addArrangedSubview:_followButton];
-
-    _requestButton = [self actionButtonWithTitle:@"🔑 ライセンスを申請" subtitle:nil];
-    [_requestButton addTarget:self action:@selector(openLicenseRequest) forControlEvents:UIControlEventTouchUpInside];
-    [_actionStack addArrangedSubview:_requestButton];
-
-    _licenseField = [UITextField new];
-    _licenseField.translatesAutoresizingMaskIntoConstraints = NO;
-    _licenseField.placeholder = @"ライセンスキー";
-    _licenseField.textAlignment = NSTextAlignmentCenter;
-    _licenseField.borderStyle = UITextBorderStyleRoundedRect;
-    _licenseField.autocorrectionType = UITextAutocorrectionTypeNo;
-    _licenseField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    _licenseField.secureTextEntry = YES;
-    _licenseVisibilityButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [_licenseVisibilityButton setTitle:@"表示" forState:UIControlStateNormal];
-    [_licenseVisibilityButton addTarget:self action:@selector(toggleLicenseVisibility) forControlEvents:UIControlEventTouchUpInside];
-    _licenseField.rightView = _licenseVisibilityButton;
-    _licenseField.rightViewMode = UITextFieldViewModeAlways;
-    [_actionStack addArrangedSubview:_licenseField];
-    [_licenseField.widthAnchor constraintEqualToConstant:250].active = YES;
-    [_licenseField.heightAnchor constraintEqualToConstant:44].active = YES;
-
-    _licenseHintLabel = [UILabel new];
-    _licenseHintLabel.text = @"未認証の場合、このページから先には進めません。";
-    _licenseHintLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightRegular];
-    _licenseHintLabel.textColor = UIColor.secondaryLabelColor;
-    _licenseHintLabel.textAlignment = NSTextAlignmentCenter;
-    _licenseHintLabel.numberOfLines = 0;
-    [_actionStack addArrangedSubview:_licenseHintLabel];
-    [_licenseHintLabel.widthAnchor constraintEqualToAnchor:_actionStack.widthAnchor constant:-20].active = YES;
+    [self buildSpecialViews];
 
     _page = [UIPageControl new];
     _page.translatesAutoresizingMaskIntoConstraints = NO;
@@ -247,25 +218,103 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     [self renderPage];
 }
 
-- (UIButton *)actionButtonWithTitle:(NSString *)title subtitle:(NSString *)subtitle {
+- (void)buildSpecialViews {
+    _followButton = [self largeActionButtonWithTitle:@"開発者をフォロー" icon:@"🦈" step:@"STEP 1"];
+    [_followButton addTarget:self action:@selector(openDeveloper) forControlEvents:UIControlEventTouchUpInside];
+    [_specialStack addArrangedSubview:_followButton];
+
+    _requestButton = [self largeActionButtonWithTitle:@"ライセンスを申請" icon:@"🔑" step:@"STEP 2"];
+    [_requestButton addTarget:self action:@selector(openLicenseRequest) forControlEvents:UIControlEventTouchUpInside];
+    [_specialStack addArrangedSubview:_requestButton];
+
+    UIView *licenseCard = [self licenseInputCard];
+    [_specialStack addArrangedSubview:licenseCard];
+}
+
+- (UIButton *)largeActionButtonWithTitle:(NSString *)title icon:(NSString *)icon step:(NSString *)step {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    button.layer.cornerRadius = 16.0;
+    button.layer.cornerRadius = 18.0;
     button.layer.masksToBounds = YES;
-    button.contentEdgeInsets = UIEdgeInsetsMake(12, 16, 12, 16);
-    button.titleLabel.numberOfLines = subtitle.length ? 2 : 1;
-    NSString *full = subtitle.length ? [NSString stringWithFormat:@"%@\n%@", title, subtitle] : title;
+    button.contentEdgeInsets = UIEdgeInsetsMake(16, 16, 16, 16);
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    button.titleLabel.numberOfLines = 3;
+    NSString *full = [NSString stringWithFormat:@"%@  %@\n%@", icon ?: @"", title ?: @"", step ?: @""];
     NSMutableAttributedString *a = [[NSMutableAttributedString alloc] initWithString:full];
-    [a addAttribute:NSFontAttributeName value:[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold] range:[full rangeOfString:title]];
-    if (subtitle.length) {
-        NSRange sub = [full rangeOfString:subtitle];
-        [a addAttribute:NSFontAttributeName value:[UIFont systemFontOfSize:11.5 weight:UIFontWeightRegular] range:sub];
-        [a addAttribute:NSForegroundColorAttributeName value:UIColor.secondaryLabelColor range:sub];
+    NSRange main = [full rangeOfString:title ?: @""];
+    if (main.location != NSNotFound) [a addAttribute:NSFontAttributeName value:[UIFont systemFontOfSize:18 weight:UIFontWeightBold] range:main];
+    NSRange stepRange = [full rangeOfString:step ?: @""];
+    if (stepRange.location != NSNotFound) {
+        [a addAttribute:NSFontAttributeName value:[UIFont systemFontOfSize:12 weight:UIFontWeightSemibold] range:stepRange];
+        [a addAttribute:NSForegroundColorAttributeName value:UIColor.secondaryLabelColor range:stepRange];
     }
     [button setAttributedTitle:a forState:UIControlStateNormal];
-    [button.widthAnchor constraintEqualToConstant:260].active = YES;
-    [button.heightAnchor constraintGreaterThanOrEqualToConstant:50].active = YES;
+    [button.heightAnchor constraintGreaterThanOrEqualToConstant:76].active = YES;
     return button;
+}
+
+- (UIView *)licenseInputCard {
+    UIView *card = [UIView new];
+    card.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    card.layer.cornerRadius = 18.0;
+    card.layer.masksToBounds = YES;
+    card.userInteractionEnabled = YES;
+
+    UIStackView *box = [UIStackView new];
+    box.translatesAutoresizingMaskIntoConstraints = NO;
+    box.axis = UILayoutConstraintAxisVertical;
+    box.alignment = UIStackViewAlignmentFill;
+    box.spacing = 10.0;
+    box.layoutMargins = UIEdgeInsetsMake(16, 16, 16, 16);
+    box.layoutMarginsRelativeArrangement = YES;
+    [card addSubview:box];
+    [NSLayoutConstraint activateConstraints:@[
+        [box.leadingAnchor constraintEqualToAnchor:card.leadingAnchor],
+        [box.trailingAnchor constraintEqualToAnchor:card.trailingAnchor],
+        [box.topAnchor constraintEqualToAnchor:card.topAnchor],
+        [box.bottomAnchor constraintEqualToAnchor:card.bottomAnchor]
+    ]];
+
+    UILabel *title = [UILabel new];
+    title.text = @"🔑 ライセンスキー";
+    title.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    [box addArrangedSubview:title];
+
+    _licenseField = [UITextField new];
+    _licenseField.placeholder = @"ここに入力";
+    _licenseField.textAlignment = NSTextAlignmentCenter;
+    _licenseField.borderStyle = UITextBorderStyleRoundedRect;
+    _licenseField.autocorrectionType = UITextAutocorrectionTypeNo;
+    _licenseField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    _licenseField.keyboardType = UIKeyboardTypeDefault;
+    _licenseField.returnKeyType = UIReturnKeyDone;
+    _licenseField.delegate = self;
+    _licenseField.secureTextEntry = NO;
+    [box addArrangedSubview:_licenseField];
+    [_licenseField.heightAnchor constraintEqualToConstant:46].active = YES;
+
+    _licenseHintLabel = [UILabel new];
+    _licenseHintLabel.text = @"未認証の場合、このページから先には進めません。";
+    _licenseHintLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightRegular];
+    _licenseHintLabel.textColor = UIColor.secondaryLabelColor;
+    _licenseHintLabel.textAlignment = NSTextAlignmentCenter;
+    _licenseHintLabel.numberOfLines = 0;
+    [box addArrangedSubview:_licenseHintLabel];
+
+    _licenseVerifyButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _licenseVerifyButton.backgroundColor = UIColor.systemOrangeColor;
+    _licenseVerifyButton.layer.cornerRadius = 14.0;
+    _licenseVerifyButton.layer.masksToBounds = YES;
+    [_licenseVerifyButton setTitle:@"ライセンス認証" forState:UIControlStateNormal];
+    [_licenseVerifyButton setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    _licenseVerifyButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+    [_licenseVerifyButton addTarget:self action:@selector(verifyLicenseTapped) forControlEvents:UIControlEventTouchUpInside];
+    [box addArrangedSubview:_licenseVerifyButton];
+    [_licenseVerifyButton.heightAnchor constraintEqualToConstant:48].active = YES;
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(focusLicenseField)];
+    [card addGestureRecognizer:tap];
+    return card;
 }
 
 - (UIView *)tipCard:(NSString *)text accent:(UIColor *)accent {
@@ -329,16 +378,15 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
 
     _followButton.hidden = !requestPage;
     _requestButton.hidden = !requestPage;
-    _licenseField.hidden = !licensePage;
-    _licenseHintLabel.hidden = !licensePage;
-    _actionStack.hidden = !(requestPage || licensePage);
+    _licenseField.superview.superview.hidden = !licensePage;
+    _specialStack.hidden = !(requestPage || licensePage);
 
     BOOL licensed = YTNicoLicenseReady() || _licenseVerifiedInSession;
     _skipButton.hidden = !licensed;
     _backButton.hidden = (_index == 0);
     _statusLabel.hidden = _statusLabel.text.length == 0;
 
-    if (licensePage) [_nextButton setTitle:@"ライセンス認証" forState:UIControlStateNormal];
+    if (licensePage) [_nextButton setTitle:@"次へ" forState:UIControlStateNormal];
     else if (startPage) [_nextButton setTitle:@"さぁ、はじめよう" forState:UIControlStateNormal];
     else [_nextButton setTitle:@"次へ" forState:UIControlStateNormal];
     [_scrollView setContentOffset:CGPointZero animated:NO];
@@ -347,16 +395,8 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
 - (void)nextTapped {
     NSString *kind = [self currentKind];
     if ([kind isEqualToString:@"license"]) {
-        if (YTNicoTutorialCheckLicense(_licenseField.text ?: @"")) {
-            _licenseVerifiedInSession = YES;
-            _statusLabel.text = @"✅ 認証できました";
-            _licenseHintLabel.text = @"認証が完了しました。次のページへ進みます。";
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [self goNextWithAnimation];
-            });
-        } else {
-            [self showLicenseRequiredAlert];
-        }
+        if (_licenseVerifiedInSession || YTNicoLicenseReady()) [self goNextWithAnimation];
+        else [self showLicenseRequiredAlert];
         return;
     }
     if ([kind isEqualToString:@"start"]) {
@@ -381,6 +421,25 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     [self goNextWithAnimation];
 }
 
+- (void)verifyLicenseTapped {
+    if (YTNicoTutorialCheckLicense(_licenseField.text ?: @"")) {
+        _licenseVerifiedInSession = YES;
+        _statusLabel.text = @"✅ 認証できました。次へ進めます。";
+        _licenseHintLabel.text = @"認証が完了しました。下の「次へ」を押してください。";
+        [UIView animateWithDuration:0.18 animations:^{ [self renderPage]; }];
+    } else {
+        [self showLicenseRequiredAlert];
+    }
+}
+
+- (void)focusLicenseField { [_licenseField becomeFirstResponder]; }
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    [self verifyLicenseTapped];
+    return YES;
+}
+
 - (void)goNextWithAnimation {
     if (_index >= (NSInteger)_pages.count - 1) return;
     _index++;
@@ -397,11 +456,6 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
     [UIView transitionWithView:self.view duration:0.18 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
         [self renderPage];
     } completion:nil];
-}
-
-- (void)toggleLicenseVisibility {
-    _licenseField.secureTextEntry = !_licenseField.secureTextEntry;
-    [_licenseVisibilityButton setTitle:(_licenseField.secureTextEntry ? @"表示" : @"隠す") forState:UIControlStateNormal];
 }
 
 - (void)showLicenseRequiredAlert {
@@ -421,12 +475,14 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
 - (void)openDeveloper {
     YTNicoSuppressTutorialForSeconds(45.0);
     _statusLabel.text = @"戻ったら、ライセンスを申請してください。";
+    [self renderPage];
     [self openURLString:@"https://x.com/sa_me_kun"];
 }
 
 - (void)openLicenseRequest {
     YTNicoSuppressTutorialForSeconds(60.0);
     _statusLabel.text = @"申請後、受け取ったキーを次のページで入力してください。";
+    [self renderPage];
     [self openURLString:@"https://twitter.com/messages/compose?recipient_id=1678480958671163392"];
 }
 
