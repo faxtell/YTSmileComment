@@ -2,6 +2,7 @@
 #import "NicoChatMessage.h"
 #import "SettingsManager.h"
 #import "DebugInspector.h"
+#import <QuartzCore/QuartzCore.h>
 
 NSString * const kYTNicoClearOverlayNotification = @"com.example.ytnico.clearOverlay";
 NSString * const kYTNicoCurrentVideoChangedNotification = @"com.example.ytnico.videoChanged";
@@ -13,6 +14,12 @@ static NSMutableSet<NSString *> *gPendingIds;
 static NSTimer *gDrainTimer;
 static NSString *gCurrentVideoId;
 static NSUInteger gGeneration;
+
+static NSMutableArray<NSDictionary *> *gTimedReplayMessages;
+static NSMutableSet<NSString *> *gTimedReplayIds;
+static NSTimer *gReplayTimer;
+static double gCurrentPlaybackSeconds;
+static CFTimeInterval gPlaybackUpdateWallTime;
 
 @interface YouTubeChatAdapter ()
 @property (nonatomic, weak) UIView *root;
@@ -28,8 +35,12 @@ static NSUInteger gGeneration;
         gParseQueue = dispatch_queue_create("com.example.ytnico.parse", DISPATCH_QUEUE_SERIAL);
         gPendingMessages = [NSMutableArray array];
         gPendingIds = [NSMutableSet set];
+        gTimedReplayMessages = [NSMutableArray array];
+        gTimedReplayIds = [NSMutableSet set];
         gCurrentVideoId = @"";
         gGeneration = 0;
+        gCurrentPlaybackSeconds = -1.0;
+        gPlaybackUpdateWallTime = 0;
     }
 }
 
@@ -68,13 +79,26 @@ static NSUInteger gGeneration;
         if (!changed) return;
         gCurrentVideoId = [videoId copy];
         gGeneration++;
+        gCurrentPlaybackSeconds = -1.0;
+        gPlaybackUpdateWallTime = 0;
     }
     @synchronized (gPendingMessages) {
         [gPendingMessages removeAllObjects];
         [gPendingIds removeAllObjects];
     }
+    @synchronized (gTimedReplayMessages) {
+        [gTimedReplayMessages removeAllObjects];
+        [gTimedReplayIds removeAllObjects];
+    }
     [gDrainTimer invalidate];
     gDrainTimer = nil;
+    [gReplayTimer invalidate];
+    gReplayTimer = nil;
+
+    NSArray *adapters = nil;
+    @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
+    for (YouTubeChatAdapter *adapter in adapters) adapter.cache = [[NicoMessageLRUCache alloc] initWithCapacity:6000];
+
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoClearOverlayNotification object:nil];
         [[NSNotificationCenter defaultCenter] postNotificationName:kYTNicoCurrentVideoChangedNotification object:nil userInfo:@{@"videoId": videoId}];
@@ -84,6 +108,97 @@ static NSUInteger gGeneration;
 
 + (NSString *)currentVideoId { @synchronized (self) { return [gCurrentVideoId copy] ?: @""; } }
 + (NSUInteger)currentGeneration { @synchronized (self) { return gGeneration; } }
+
+#pragma mark - Playback synced replay
+
++ (void)updateCurrentPlaybackSeconds:(double)seconds {
+    if (!isfinite(seconds) || seconds < 0) return;
+    @synchronized (self) {
+        if (gCurrentPlaybackSeconds < 0 || fabs(seconds - gCurrentPlaybackSeconds) > 0.05) {
+            gCurrentPlaybackSeconds = seconds;
+            gPlaybackUpdateWallTime = CACurrentMediaTime();
+        }
+    }
+}
+
++ (double)currentPlaybackSeconds {
+    @synchronized (self) { return gCurrentPlaybackSeconds; }
+}
+
++ (void)queueTimedReplayAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId offsetMilliseconds:(unsigned long long)offsetMilliseconds generation:(NSUInteger)generation {
+    author = [self norm:author];
+    text = [self norm:text];
+    messageId = [self norm:messageId];
+    if (text.length == 0 || generation != [self currentGeneration]) return;
+    if (messageId.length == 0) messageId = [NSString stringWithFormat:@"replay-%llu-%lu", offsetMilliseconds, (unsigned long)[text hash]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation != [self currentGeneration]) return;
+        @synchronized (gTimedReplayMessages) {
+            if ([gTimedReplayIds containsObject:messageId]) return;
+            [gTimedReplayIds addObject:messageId];
+            [gTimedReplayMessages addObject:@{@"a":author ?: @"chat", @"t":text, @"i":messageId, @"o":@(offsetMilliseconds), @"g":@(generation)}];
+            [gTimedReplayMessages sortUsingComparator:^NSComparisonResult(NSDictionary *m1, NSDictionary *m2) {
+                unsigned long long o1 = [m1[@"o"] unsignedLongLongValue];
+                unsigned long long o2 = [m2[@"o"] unsignedLongLongValue];
+                if (o1 == o2) return NSOrderedSame;
+                return o1 < o2 ? NSOrderedAscending : NSOrderedDescending;
+            }];
+            if (gTimedReplayMessages.count > 2500) {
+                NSUInteger removeCount = MIN((NSUInteger)400, gTimedReplayMessages.count);
+                for (NSUInteger i = 0; i < removeCount; i++) {
+                    NSDictionary *old = gTimedReplayMessages.firstObject;
+                    if (old[@"i"]) [gTimedReplayIds removeObject:old[@"i"]];
+                    [gTimedReplayMessages removeObjectAtIndex:0];
+                }
+            }
+        }
+        [self ytnico_ensureReplayTimer];
+    });
+}
+
++ (void)ytnico_ensureReplayTimer {
+    if (gReplayTimer && gReplayTimer.valid) return;
+    gReplayTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(ytnico_replayTick) userInfo:nil repeats:YES];
+}
+
++ (void)ytnico_replayTick {
+    NSUInteger generation = [self currentGeneration];
+    double playback = [self currentPlaybackSeconds];
+    if (playback < 0) return;
+    unsigned long long nowMs = (unsigned long long)MAX(0.0, playback * 1000.0);
+    unsigned long long toleranceMs = 850;
+    unsigned long long lateDropMs = 45000;
+
+    NSMutableArray<NSDictionary *> *emitBatch = [NSMutableArray array];
+    @synchronized (gTimedReplayMessages) {
+        NSMutableArray<NSDictionary *> *remain = [NSMutableArray arrayWithCapacity:gTimedReplayMessages.count];
+        NSUInteger emitted = 0;
+        for (NSDictionary *m in gTimedReplayMessages) {
+            if ([m[@"g"] unsignedIntegerValue] != generation) {
+                if (m[@"i"]) [gTimedReplayIds removeObject:m[@"i"]];
+                continue;
+            }
+            unsigned long long offset = [m[@"o"] unsignedLongLongValue];
+            if (offset + lateDropMs < nowMs) {
+                if (m[@"i"]) [gTimedReplayIds removeObject:m[@"i"]];
+                continue;
+            }
+            if (offset <= nowMs + toleranceMs && emitted < 8) {
+                [emitBatch addObject:m];
+                if (m[@"i"]) [gTimedReplayIds removeObject:m[@"i"]];
+                emitted++;
+            } else {
+                [remain addObject:m];
+            }
+        }
+        [gTimedReplayMessages setArray:remain];
+        if (gTimedReplayMessages.count == 0) {
+            [gReplayTimer invalidate];
+            gReplayTimer = nil;
+        }
+    }
+    for (NSDictionary *m in emitBatch) [self emitNowAuthor:m[@"a"] text:m[@"t"] messageId:m[@"i"]];
+}
 
 #pragma mark - Adaptive pacing buffer
 
@@ -125,9 +240,7 @@ static NSUInteger gGeneration;
     dispatch_async(dispatch_get_main_queue(), ^{
         NSArray *adapters = nil;
         @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
-        for (YouTubeChatAdapter *adapter in adapters) {
-            [adapter emitAuthor:author text:text messageId:messageId];
-        }
+        for (YouTubeChatAdapter *adapter in adapters) [adapter emitAuthor:author text:text messageId:messageId];
     });
 }
 
