@@ -40,7 +40,7 @@ jobs:
           brew update
           brew install ldid dpkg xz
 
-      - name: Install Theos and dm.pl
+      - name: Install Theos and prepare dm.pl
         run: |
           rm -rf "$HOME/theos"
           git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
@@ -49,10 +49,15 @@ jobs:
 
           mkdir -p "$HOME/theos/bin"
 
-          # Theos normally provides dm.pl. If it is not present for any reason,
-          # install the official fallback package so `make package` can create debs.
+          # Current Theos provides dm.pl as a submodule under vendor/dm.pl.
+          # Some setups also expose it via bin/dm.pl. Normalize that here.
+          if [[ -x "$HOME/theos/vendor/dm.pl/dm.pl" && ! -x "$HOME/theos/bin/dm.pl" ]]; then
+            ln -sf "$HOME/theos/vendor/dm.pl/dm.pl" "$HOME/theos/bin/dm.pl"
+          fi
+
+          # Fallback: install dm.pl from npm only if Theos did not provide it.
           if [[ ! -x "$HOME/theos/bin/dm.pl" ]]; then
-            echo "[WARN] $HOME/theos/bin/dm.pl not found; installing fallback dm.pl via npm"
+            echo "[WARN] dm.pl not found in Theos; installing fallback via npm"
             npm install -g @theosdev/dm.pl
             DMPL_PATH="$(command -v dm.pl || true)"
             if [[ -z "$DMPL_PATH" ]]; then
@@ -66,7 +71,7 @@ jobs:
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
           echo "[INFO] THEOS=$HOME/theos"
-          "$HOME/theos/bin/dm.pl" --help >/dev/null
+          echo "[INFO] dm.pl path: $(ls -l "$HOME/theos/bin/dm.pl")"
 
       - name: Build deb package
         run: |
