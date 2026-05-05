@@ -1,6 +1,7 @@
 #import "YTNicoSettingsViewController.h"
 #import "SettingsManager.h"
 #import "YouTubeChatAdapter.h"
+#import <objc/runtime.h>
 
 @interface YTNicoSettingsViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
