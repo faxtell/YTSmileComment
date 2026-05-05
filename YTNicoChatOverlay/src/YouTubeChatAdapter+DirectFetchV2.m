@@ -97,7 +97,13 @@ static const NSInteger YTV2MaxLivePolls = 180;
 + (BOOL)ytv2_gen:(NSUInteger)g { return g == [YouTubeChatAdapter currentGeneration]; }
 + (BOOL)ytv2_hasReplaySignal:(NSString *)s { return [s rangeOfString:@"videoOffsetTimeMsec"].location != NSNotFound || [s rangeOfString:@"replayChatItemAction"].location != NSNotFound || [s rangeOfString:@"get_live_chat_replay"].location != NSNotFound || [s rangeOfString:@"liveChatReplayContinuationData"].location != NSNotFound || [s rangeOfString:@"replayContinuationData"].location != NSNotFound || [s rangeOfString:@"live_chat/get_live_chat_replay"].location != NSNotFound; }
 + (BOOL)ytv2_hasLiveEndpoint:(NSString *)s { return ([s rangeOfString:@"live_chat/get_live_chat"].location != NSNotFound || [s rangeOfString:@"get_live_chat\""].location != NSNotFound || [s rangeOfString:@"get_live_chat?"].location != NSNotFound) && [s rangeOfString:@"get_live_chat_replay"].location == NSNotFound; }
-+ (BOOL)ytv2_isExplicitLiveNow:(NSString *)s { if ([self ytv2_hasReplaySignal:s]) return NO; return [s rangeOfString:@"\"isLiveNow\":true"].location != NSNotFound || [s rangeOfString:@"\\\"isLiveNow\\\":true"].location != NSNotFound || [s rangeOfString:@"\"isLive\":true"].location != NSNotFound || [s rangeOfString:@"\\\"isLive\\\":true"].location != NSNotFound || [s rangeOfString:@"LIVE_STREAM_OFFLINE"].location == NSNotFound && [s rangeOfString:@"\"liveBroadcastDetails\""].location != NSNotFound; }
++ (BOOL)ytv2_isExplicitLiveNow:(NSString *)s {
+    if ([self ytv2_hasReplaySignal:s]) return NO;
+    BOOL flagLiveNow = [s rangeOfString:@"\"isLiveNow\":true"].location != NSNotFound || [s rangeOfString:@"\\\"isLiveNow\\\":true"].location != NSNotFound;
+    BOOL flagLive = [s rangeOfString:@"\"isLive\":true"].location != NSNotFound || [s rangeOfString:@"\\\"isLive\\\":true"].location != NSNotFound;
+    BOOL hasBroadcastDetails = ([s rangeOfString:@"LIVE_STREAM_OFFLINE"].location == NSNotFound && [s rangeOfString:@"\"liveBroadcastDetails\""].location != NSNotFound);
+    return flagLiveNow || flagLive || hasBroadcastDetails;
+}
 + (BOOL)ytv2_isLiveNow:(NSString *)s { return [self ytv2_isExplicitLiveNow:s] || [self ytv2_hasLiveEndpoint:s]; }
 + (BOOL)ytv2_hasArchivedChatSignal:(NSString *)s { return [self ytv2_hasReplaySignal:s]; }
 
