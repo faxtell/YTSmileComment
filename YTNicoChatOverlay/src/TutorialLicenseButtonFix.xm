@@ -1,6 +1,13 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+@interface YTNicoTutorialViewController : UIViewController
+- (void)ytnico_rewireLicenseButtons;
+- (void)ytnico_openExternalURLString:(NSString *)urlString fallback:(NSString *)fallbackURLString;
+- (void)ytnico_followDeveloperDirect;
+- (void)ytnico_requestLicenseDirect;
+@end
+
 static const void *kYTNicoTutorialButtonRewiredKey = &kYTNicoTutorialButtonRewiredKey;
 static const void *kYTNicoTutorialCardTapKey = &kYTNicoTutorialCardTapKey;
 
@@ -15,6 +22,8 @@ static NSString *YTNicoButtonTitle(UIButton *button) {
     NSString *title = [button titleForState:UIControlStateNormal] ?: @"";
     if (title.length == 0) title = button.currentTitle ?: @"";
     if (title.length == 0) title = button.accessibilityLabel ?: @"";
+    NSString *at = button.currentAttributedTitle.string ?: @"";
+    if (at.length) title = [title.length ? [title stringByAppendingFormat:@" %@", at] : at copy];
     return title ?: @"";
 }
 
