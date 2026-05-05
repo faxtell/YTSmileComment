@@ -20,7 +20,6 @@ static NSString * const YTNicoEnhancedMessageNotification = @"YTNicoEnhancedMess
     Method newStop = class_getInstanceMethod(cls, @selector(ytnico_stopObserving));
     if (origStop && newStop) method_exchangeImplementations(origStop, newStop);
 
-    Class meta = object_getClass(cls);
     Method origIngest = class_getClassMethod(cls, @selector(ingestPotentialJSONObject:));
     Method newIngest = class_getClassMethod(cls, @selector(ytnico_ingestPotentialJSONObject:));
     if (origIngest && newIngest) method_exchangeImplementations(origIngest, newIngest);
