@@ -17,6 +17,8 @@ static NSString *gCurrentVideoId;
 static NSUInteger gGeneration;
 static NSString *gRecentDetectedVideoId;
 static NSDate *gRecentDetectedVideoDate;
+static CFTimeInterval gLastMessageWallTime;
+static CFTimeInterval gLastWatchdogKick;
 
 static NSMutableArray<NSDictionary *> *gTimedReplayMessages;
 static NSMutableSet<NSString *> *gTimedReplayIds;
@@ -45,6 +47,8 @@ static CFTimeInterval gPlaybackUpdateWallTime;
         gGeneration = 0;
         gCurrentPlaybackSeconds = -1.0;
         gPlaybackUpdateWallTime = 0;
+        gLastMessageWallTime = CACurrentMediaTime();
+        gLastWatchdogKick = 0;
     }
 }
 
@@ -58,6 +62,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
     @synchronized (gAdapters) { [gAdapters addObject:self]; }
     [self refreshMockTimer];
     [YouTubeChatAdapter ytnico_ensureDrainTimer];
+    [YouTubeChatAdapter watchdogKick];
 }
 
 - (void)stopObserving {
@@ -87,7 +92,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 + (NSString *)recentDetectedVideoId {
     @synchronized (self) {
         if (gRecentDetectedVideoId.length != 11 || !gRecentDetectedVideoDate) return @"";
-        if ([NSDate.date timeIntervalSinceDate:gRecentDetectedVideoDate] > 90.0) return @"";
+        if ([NSDate.date timeIntervalSinceDate:gRecentDetectedVideoDate] > 180.0) return @"";
         return [gRecentDetectedVideoId copy] ?: @"";
     }
 }
@@ -264,6 +269,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
     messageId = [self norm:messageId];
     if (text.length == 0) return;
     if (messageId.length == 0) messageId = [NSString stringWithFormat:@"direct-%lu", (unsigned long)[[NSString stringWithFormat:@"%@|%@", author, text] hash]];
+    gLastMessageWallTime = CACurrentMediaTime();
 
     if ([author isEqualToString:@"YTNico"]) {
         [self emitNowAuthor:author text:text messageId:messageId];
@@ -289,6 +295,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 }
 
 + (void)emitNowAuthor:(NSString *)author text:(NSString *)text messageId:(NSString *)messageId {
+    gLastMessageWallTime = CACurrentMediaTime();
     [self ytnico_emitAuthorNow:author text:text messageId:messageId];
 }
 
@@ -378,6 +385,31 @@ static CFTimeInterval gPlaybackUpdateWallTime;
 }
 
 + (NSUInteger)pendingMessageCount { @synchronized (gPendingMessages) { return gPendingMessages.count; } }
+
++ (NSTimeInterval)secondsSinceLastMessage {
+    CFTimeInterval t = gLastMessageWallTime;
+    if (t <= 0) return 9999.0;
+    return MAX(0.0, CACurrentMediaTime() - t);
+}
+
++ (void)watchdogKick {
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - gLastWatchdogKick < 4.0) return;
+    gLastWatchdogKick = now;
+    if (!SettingsManager.shared.enabled) return;
+    [self ytnico_ensureDrainTimer];
+    if (SettingsManager.shared.mockMode) {
+        NSArray *adapters = nil;
+        @synchronized (gAdapters) { adapters = gAdapters.allObjects; }
+        for (YouTubeChatAdapter *adapter in adapters) [adapter refreshMockTimer];
+    }
+    @synchronized (gPendingMessages) {
+        if (gPendingMessages.count > 0 && (!gDrainTimer || !gDrainTimer.valid)) {
+            [[DebugInspector shared] important:@"watchdog restarted drain pending=%lu", (unsigned long)gPendingMessages.count];
+            [self ytnico_ensureDrainTimer];
+        }
+    }
+}
 
 #pragma mark - Legacy JSON parser entrypoints
 
@@ -469,6 +501,7 @@ static CFTimeInterval gPlaybackUpdateWallTime;
     if (mid.length == 0) mid = [NSString stringWithFormat:@"%lu", (unsigned long)[[NSString stringWithFormat:@"%@|%@", a, t] hash]];
     if ([self.cache containsMessageId:mid]) return;
     [self.cache addMessageId:mid];
+    gLastMessageWallTime = CACurrentMediaTime();
     [[DebugInspector shared] log:@"emit renderer author=%@ text=%@", a, t];
     NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:mid authorName:a text:t timestamp:NSDate.date];
     [self.delegate chatAdapterDidReceiveMessage:msg];
