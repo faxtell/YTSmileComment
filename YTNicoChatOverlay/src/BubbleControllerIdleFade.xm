@@ -7,14 +7,22 @@
 - (void)updateToggleButtonAppearance;
 @end
 
+static NSString * const kYTNicoBubblePrefsDomain = @"com.example.yt-nico-chat-overlay";
+static NSString * const kYTNicoBubblePosXKey = @"bubble.position.xRatio";
+static NSString * const kYTNicoBubblePosYKey = @"bubble.position.yRatio";
 static NSTimeInterval const kYTNicoControllerBubbleIdleSeconds = 5.0;
 static const void *kYTNicoControllerBubbleRegisteredKey = &kYTNicoControllerBubbleRegisteredKey;
 static const void *kYTNicoControllerBubbleIdleHiddenKey = &kYTNicoControllerBubbleIdleHiddenKey;
+static const void *kYTNicoControllerBubblePanKey = &kYTNicoControllerBubblePanKey;
 static NSInteger gYTNicoControllerBubbleGeneration = 0;
 static NSHashTable<UIButton *> *gYTNicoControllerBubbleButtons = nil;
 
 static BOOL YTNicoControllerBubbleIsYouTube(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
+}
+
+static NSUserDefaults *YTNicoBubblePrefs(void) {
+    return [[NSUserDefaults alloc] initWithSuiteName:kYTNicoBubblePrefsDomain] ?: NSUserDefaults.standardUserDefaults;
 }
 
 static NSString *YTNicoControllerButtonTitle(UIButton *button) {
@@ -37,14 +45,12 @@ static UIButton *YTNicoFindBubbleButtonForController(YTNicoController *controlle
     UIWindow *window = controller.window;
     if (!window) return nil;
 
-    // The original controller adds the bubble button directly to the host window.
     for (UIView *sub in window.subviews.reverseObjectEnumerator) {
         if (![sub isKindOfClass:UIButton.class]) continue;
         UIButton *button = (UIButton *)sub;
         if (YTNicoControllerButtonLooksLikeBubble(button)) return button;
     }
 
-    // Fallback: exact frame pattern from ensureToggleButton: 44x44 around y=96.
     for (UIView *sub in window.subviews.reverseObjectEnumerator) {
         if (![sub isKindOfClass:UIButton.class]) continue;
         UIButton *button = (UIButton *)sub;
@@ -61,6 +67,57 @@ static CGFloat YTNicoVisibleAlphaForBubble(UIButton *button) {
     NSString *title = YTNicoControllerButtonTitle(button);
     if ([title isEqualToString:@"💭"]) return 0.45;
     return 0.92;
+}
+
+static CGRect YTNicoClampBubbleFrame(UIButton *button, CGRect frame) {
+    UIView *host = button.superview;
+    if (!host) return frame;
+    UIEdgeInsets inset = UIEdgeInsetsZero;
+    if (@available(iOS 11.0, *)) inset = host.safeAreaInsets;
+    CGFloat margin = 6.0;
+    CGFloat minX = inset.left + margin;
+    CGFloat minY = inset.top + margin;
+    CGFloat maxX = host.bounds.size.width - inset.right - margin - frame.size.width;
+    CGFloat maxY = host.bounds.size.height - inset.bottom - margin - frame.size.height;
+    if (maxX < minX) maxX = minX;
+    if (maxY < minY) maxY = minY;
+    frame.origin.x = MIN(MAX(frame.origin.x, minX), maxX);
+    frame.origin.y = MIN(MAX(frame.origin.y, minY), maxY);
+    return CGRectIntegral(frame);
+}
+
+static void YTNicoSaveBubblePosition(UIButton *button) {
+    UIView *host = button.superview;
+    if (!host || host.bounds.size.width <= 0 || host.bounds.size.height <= 0) return;
+    CGFloat x = (CGRectGetMidX(button.frame) / MAX(host.bounds.size.width, 1.0));
+    CGFloat y = (CGRectGetMidY(button.frame) / MAX(host.bounds.size.height, 1.0));
+    x = MIN(MAX(x, 0.0), 1.0);
+    y = MIN(MAX(y, 0.0), 1.0);
+    NSUserDefaults *d = YTNicoBubblePrefs();
+    [d setDouble:x forKey:kYTNicoBubblePosXKey];
+    [d setDouble:y forKey:kYTNicoBubblePosYKey];
+    [d synchronize];
+}
+
+static BOOL YTNicoHasSavedBubblePosition(void) {
+    NSUserDefaults *d = YTNicoBubblePrefs();
+    return [d objectForKey:kYTNicoBubblePosXKey] != nil && [d objectForKey:kYTNicoBubblePosYKey] != nil;
+}
+
+static void YTNicoApplySavedBubblePosition(UIButton *button) {
+    if (!YTNicoHasSavedBubblePosition()) return;
+    UIView *host = button.superview;
+    if (!host || host.bounds.size.width <= 0 || host.bounds.size.height <= 0) return;
+    NSUserDefaults *d = YTNicoBubblePrefs();
+    CGFloat xRatio = MIN(MAX([d doubleForKey:kYTNicoBubblePosXKey], 0.0), 1.0);
+    CGFloat yRatio = MIN(MAX([d doubleForKey:kYTNicoBubblePosYKey], 0.0), 1.0);
+    CGSize size = button.frame.size;
+    if (size.width <= 0 || size.height <= 0) size = CGSizeMake(44, 44);
+    CGFloat centerX = host.bounds.size.width * xRatio;
+    CGFloat centerY = host.bounds.size.height * yRatio;
+    CGRect frame = CGRectMake(centerX - size.width / 2.0, centerY - size.height / 2.0, size.width, size.height);
+    frame = YTNicoClampBubbleFrame(button, frame);
+    [UIView performWithoutAnimation:^{ button.frame = frame; }];
 }
 
 static NSArray<UIButton *> *YTNicoAliveControllerBubbleButtons(void) {
@@ -110,11 +167,53 @@ static void YTNicoShowRegisteredControllerBubbles(void) {
     YTNicoScheduleControllerBubbleHide();
 }
 
+@interface YTNicoBubblePanHandler : NSObject <UIGestureRecognizerDelegate>
+@end
+
+@implementation YTNicoBubblePanHandler
+- (void)ytnico_handleBubblePan:(UIPanGestureRecognizer *)pan {
+    UIButton *button = (UIButton *)pan.view;
+    if (![button isKindOfClass:UIButton.class]) return;
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        YTNicoShowRegisteredControllerBubbles();
+    }
+    CGPoint translation = [pan translationInView:button.superview];
+    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+        CGRect frame = button.frame;
+        frame.origin.x += translation.x;
+        frame.origin.y += translation.y;
+        frame = YTNicoClampBubbleFrame(button, frame);
+        button.frame = frame;
+        [pan setTranslation:CGPointZero inView:button.superview];
+    }
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled || pan.state == UIGestureRecognizerStateFailed) {
+        YTNicoSaveBubblePosition(button);
+        YTNicoShowRegisteredControllerBubbles();
+    }
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
+}
+@end
+
+static void YTNicoInstallBubblePan(UIButton *button) {
+    if (!button || objc_getAssociatedObject(button, kYTNicoControllerBubblePanKey)) return;
+    YTNicoBubblePanHandler *handler = [YTNicoBubblePanHandler new];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:handler action:@selector(ytnico_handleBubblePan:)];
+    pan.maximumNumberOfTouches = 1;
+    pan.cancelsTouchesInView = NO;
+    pan.delegate = handler;
+    [button addGestureRecognizer:pan];
+    objc_setAssociatedObject(button, kYTNicoControllerBubblePanKey, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
     if (!YTNicoControllerBubbleIsYouTube() || !YTNicoControllerButtonLooksLikeBubble(button)) return;
     if (!gYTNicoControllerBubbleButtons) gYTNicoControllerBubbleButtons = [NSHashTable weakObjectsHashTable];
     [gYTNicoControllerBubbleButtons addObject:button];
     button.accessibilityLabel = @"YTNico コメント表示 吹き出し";
+    YTNicoInstallBubblePan(button);
+    YTNicoApplySavedBubblePosition(button);
     if (![objc_getAssociatedObject(button, kYTNicoControllerBubbleRegisteredKey) boolValue]) {
         objc_setAssociatedObject(button, kYTNicoControllerBubbleRegisteredKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(button, kYTNicoControllerBubbleIdleHiddenKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -135,6 +234,7 @@ static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
     UIButton *button = YTNicoFindBubbleButtonForController(self);
     if (!button) return;
     YTNicoRegisterControllerBubbleButton(button);
+    YTNicoApplySavedBubblePosition(button);
     if ([objc_getAssociatedObject(button, kYTNicoControllerBubbleIdleHiddenKey) boolValue]) {
         button.alpha = 0.0;
     }
@@ -163,5 +263,8 @@ static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!YTNicoControllerBubbleIsYouTube()) return;
         gYTNicoControllerBubbleButtons = [NSHashTable weakObjectsHashTable];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+            for (UIButton *button in YTNicoAliveControllerBubbleButtons()) YTNicoApplySavedBubblePosition(button);
+        }];
     });
 }
