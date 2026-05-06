@@ -1,8 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVKit/AVKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import "SettingsManager.h"
-#import "DebugInspector.h"
 
 static NSString * const kYTNicoPiPBridgeDomain = @"com.example.ytnico.pipbridge";
 static NSString * const kYTNicoPiPBridgeCommentsKey = @"comments";
@@ -14,6 +12,8 @@ static UIView *gYTNicoSBPiPView = nil;
 static NSUInteger gYTNicoSBPiPLaneCursor = 0;
 static NSInteger gYTNicoSBLastSerial = 0;
 static BOOL gYTNicoSBPiPActive = NO;
+static BOOL gYTNicoYTPiPBridgeActive = NO;
+static CFTimeInterval gYTNicoSBLastFrameUpdate = 0;
 
 static BOOL YTNicoIsYouTubeProcess(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
@@ -32,15 +32,18 @@ static void YTNicoPiPBridgePostNotification(void) {
 }
 
 static void YTNicoPiPBridgeSetActive(BOOL active) {
+    if (!YTNicoIsYouTubeProcess()) return;
+    gYTNicoYTPiPBridgeActive = active;
     NSUserDefaults *d = YTNicoPiPBridgeDefaults();
     [d setBool:active forKey:kYTNicoPiPBridgeActiveKey];
+    if (!active) [d removeObjectForKey:kYTNicoPiPBridgeCommentsKey];
     [d synchronize];
     YTNicoPiPBridgePostNotification();
-    [[DebugInspector shared] important:@"PiP bridge active=%d", active];
 }
 
 static void YTNicoPiPBridgePublishComment(NSString *author, NSString *text, NSString *messageId) {
     if (!YTNicoIsYouTubeProcess()) return;
+    if (!gYTNicoYTPiPBridgeActive && ![YTNicoPiPBridgeDefaults() boolForKey:kYTNicoPiPBridgeActiveKey]) return;
     if (!text.length) return;
     if ([author isEqualToString:@"YTNico"]) return;
 
@@ -57,7 +60,7 @@ static void YTNicoPiPBridgePublishComment(NSString *author, NSString *text, NSSt
         @"time": @([NSDate.date timeIntervalSince1970])
     };
     [comments addObject:entry];
-    while (comments.count > 80) [comments removeObjectAtIndex:0];
+    while (comments.count > 40) [comments removeObjectAtIndex:0];
     [d setObject:comments forKey:kYTNicoPiPBridgeCommentsKey];
     [d synchronize];
     YTNicoPiPBridgePostNotification();
@@ -70,7 +73,7 @@ static CGRect YTNicoSBPiPFrame(void) {
     CGFloat x = CGRectGetWidth(s) - width - 12.0;
     CGFloat y = CGRectGetHeight(s) - height - 116.0;
     if (y < 72.0) y = 72.0;
-    return CGRectMake(x, y, width, height);
+    return CGRectIntegral(CGRectMake(x, y, width, height));
 }
 
 static void YTNicoSBEnsurePiPOverlay(void) {
@@ -105,9 +108,15 @@ static void YTNicoSBEnsurePiPOverlay(void) {
             gYTNicoSBPiPView.layer.cornerRadius = 12.0;
             [gYTNicoSBPiPWindow.rootViewController.view addSubview:gYTNicoSBPiPView];
         }
-        gYTNicoSBPiPWindow.frame = UIScreen.mainScreen.bounds;
+
+        CFTimeInterval now = CACurrentMediaTime();
+        CGRect frame = YTNicoSBPiPFrame();
+        if (now - gYTNicoSBLastFrameUpdate > 0.5 || !CGRectEqualToRect(gYTNicoSBPiPView.frame, frame)) {
+            gYTNicoSBLastFrameUpdate = now;
+            gYTNicoSBPiPWindow.frame = UIScreen.mainScreen.bounds;
+            gYTNicoSBPiPView.frame = frame;
+        }
         gYTNicoSBPiPWindow.hidden = NO;
-        gYTNicoSBPiPView.frame = YTNicoSBPiPFrame();
     });
 }
 
@@ -118,6 +127,7 @@ static void YTNicoSBHidePiPOverlay(void) {
         gYTNicoSBPiPWindow.hidden = YES;
         gYTNicoSBPiPWindow = nil;
         gYTNicoSBPiPLaneCursor = 0;
+        gYTNicoSBLastSerial = 0;
     });
 }
 
@@ -171,14 +181,16 @@ static void YTNicoSBReadBridge(void) {
 
     NSArray *comments = [d arrayForKey:kYTNicoPiPBridgeCommentsKey] ?: @[];
     NSTimeInterval now = [NSDate.date timeIntervalSince1970];
+    NSInteger latestSerial = gYTNicoSBLastSerial;
     for (NSDictionary *entry in comments) {
         NSInteger serial = [entry[@"serial"] integerValue];
         NSTimeInterval t = [entry[@"time"] doubleValue];
         if (serial <= gYTNicoSBLastSerial) continue;
-        if (now - t > 30.0) continue;
-        gYTNicoSBLastSerial = serial;
+        if (now - t > 20.0) continue;
+        latestSerial = MAX(latestSerial, serial);
         YTNicoSBEmitPiPText(entry[@"author"] ?: @"", entry[@"text"] ?: @"");
     }
+    gYTNicoSBLastSerial = latestSerial;
 }
 
 static void YTNicoSBBridgeCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
@@ -189,15 +201,11 @@ static void YTNicoSBBridgeCallback(CFNotificationCenterRef center, void *observe
 
 - (void)startPictureInPicture {
     %orig;
-    if (YTNicoIsYouTubeProcess()) YTNicoPiPBridgeSetActive(YES);
+    YTNicoPiPBridgeSetActive(YES);
 }
 
 - (void)stopPictureInPicture {
-    if (YTNicoIsYouTubeProcess()) YTNicoPiPBridgeSetActive(NO);
-    %orig;
-}
-
-- (void)setPictureInPicturePossible:(BOOL)possible {
+    YTNicoPiPBridgeSetActive(NO);
     %orig;
 }
 
@@ -219,6 +227,10 @@ static void YTNicoSBBridgeCallback(CFNotificationCenterRef center, void *observe
 
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (YTNicoIsYouTubeProcess()) {
+            gYTNicoYTPiPBridgeActive = [YTNicoPiPBridgeDefaults() boolForKey:kYTNicoPiPBridgeActiveKey];
+            return;
+        }
         if (YTNicoIsSpringBoardProcess()) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, YTNicoSBBridgeCallback, (__bridge CFStringRef)kYTNicoPiPBridgeNotify, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
