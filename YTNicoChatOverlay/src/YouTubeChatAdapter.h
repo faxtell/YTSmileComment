@@ -27,6 +27,9 @@ FOUNDATION_EXTERN NSString * const kYTNicoCurrentVideoChangedNotification;
 + (void)clearCurrentVideoAndComments;
 + (NSString *)currentVideoId;
 + (NSUInteger)currentGeneration;
++ (NSUInteger)pendingMessageCount;
++ (NSTimeInterval)secondsSinceLastMessage;
++ (void)watchdogKick;
 @end
 
 @interface YouTubeChatAdapter (Replay)
