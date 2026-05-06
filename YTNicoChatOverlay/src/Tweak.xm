@@ -162,6 +162,8 @@ static const void *kToastKey = &kToastKey;
         adapter = [YouTubeChatAdapter new];
         adapter.delegate = self;
         objc_setAssociatedObject(self, kAdapterKey, adapter, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else {
+        adapter.delegate = self;
     }
     [adapter startObservingInRootView:self.window];
 }
@@ -181,20 +183,21 @@ static const void *kToastKey = &kToastKey;
         objc_setAssociatedObject(self, kOverlayKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (overlay.superview != target) {
-        [overlay clearComments];
         [overlay removeFromSuperview];
         overlay.frame = frame;
         [target addSubview:overlay];
     } else if (!CGRectEqualToRect(overlay.frame, frame)) {
-        [overlay clearComments];
         overlay.frame = frame;
     }
+    overlay.hidden = NO;
+    overlay.alpha = 1.0;
+    overlay.layer.zPosition = 9999;
     [target bringSubviewToFront:overlay];
     return overlay;
 }
 
-- (void)ensureFallbackOverlayAttached {
-    if (!self.window) return;
+- (CGRect)safeWindowOverlayFrame {
+    if (!self.window) return CGRectZero;
     CGRect bounds = self.window.bounds;
     CGFloat safeTop = 20.0;
     CGFloat safeBottom = 0.0;
@@ -202,30 +205,42 @@ static const void *kToastKey = &kToastKey;
         safeTop = self.window.safeAreaInsets.top;
         safeBottom = self.window.safeAreaInsets.bottom;
     }
-
-    BOOL portrait = bounds.size.height >= bounds.size.width;
-    if (!portrait) {
-        [self detachOverlay];
-        return;
-    }
+    BOOL landscape = bounds.size.width > bounds.size.height;
+    if (landscape) return bounds;
 
     CGFloat y = MAX(safeTop + 8.0, 32.0);
     CGFloat width = bounds.size.width;
     CGFloat height = MIN(width * 9.0 / 16.0, bounds.size.height - y - safeBottom - 80.0);
-    if (height < 120.0) {
-        [self detachOverlay];
+    if (height < 120.0) height = MAX(120.0, bounds.size.height * 0.36);
+    return CGRectMake(0, y, width, MIN(height, bounds.size.height - y - safeBottom));
+}
+
+- (NicoChatOverlayView *)ensureResilientFallbackOverlay {
+    if (!self.window) return nil;
+    CGRect frame = [self safeWindowOverlayFrame];
+    if (CGRectIsEmpty(frame) || frame.size.width < 80 || frame.size.height < 60) return nil;
+    NicoChatOverlayView *overlay = [self overlayForTargetView:self.window frame:frame];
+    [self.window bringSubviewToFront:overlay];
+    [self ensureToggleButton];
+    [[DebugInspector shared] log:@"resilient fallback overlay frame=%@", NSStringFromCGRect(frame)];
+    return overlay;
+}
+
+- (void)ensureFallbackOverlayAttached {
+    if (!self.window) return;
+    CGRect bounds = self.window.bounds;
+    BOOL portrait = bounds.size.height >= bounds.size.width;
+    if (!portrait) {
+        [self overlayForTargetView:self.window frame:bounds];
         return;
     }
-
-    CGRect frame = CGRectMake(0, y, width, height);
-    [self overlayForTargetView:self.window frame:frame];
-    [[DebugInspector shared] log:@"Attached safe portrait fallback overlay frame=%@", NSStringFromCGRect(frame)];
+    [self ensureResilientFallbackOverlay];
 }
 
 - (void)ensureOverlayAttached {
     UIView *player = [self findBestPlayerCandidateInView:self.window];
     if (!player) {
-        [[DebugInspector shared] log:@"No safe player candidate found; using safe portrait fallback if possible"];
+        [[DebugInspector shared] log:@"No safe player candidate found; using resilient fallback"];
         [self ensureFallbackOverlayAttached];
         return;
     }
@@ -334,6 +349,7 @@ static const void *kToastKey = &kToastKey;
     }
     [self ensureOverlayAttached];
     [YouTubeChatAdapter forceResetForVideoId:videoId];
+    [self ensureOverlayAttached];
     [self showSystemToast:[NSString stringWithFormat:@"%@コメント取得開始: %@", source.length ? [source stringByAppendingString:@"から"] : @"", videoId]];
     [[DebugInspector shared] important:@"manual fetch source=%@ videoId=%@", source ?: @"unknown", videoId];
     [YouTubeChatAdapter ytnico_fetchCommentsForVideoIdIgnoringThrottle:videoId];
@@ -407,8 +423,9 @@ static const void *kToastKey = &kToastKey;
 - (void)emitDisplayTestComment {
     [self ensureOverlayAttached];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
+    if (!overlay.superview) overlay = [self ensureResilientFallbackOverlay];
     if (!overlay.superview) return;
-    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUID.UUIDString authorName:@"YTNico" text:@"表示テスト: これが流れればOverlayは正常です" timestamp:NSDate.date];
+    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUIDString authorName:@"YTNico" text:@"表示テスト: これが流れればOverlayは正常です" timestamp:NSDate.date];
     [overlay enqueueMessage:msg];
 }
 
@@ -437,15 +454,25 @@ static const void *kToastKey = &kToastKey;
 #pragma mark - Chat delegate
 
 - (void)chatAdapterDidReceiveMessage:(NicoChatMessage *)message {
-    if (!message || message.text.length == 0 || ![SettingsManager shared].enabled) return;
+    if (!message || message.text.length == 0) return;
+    [[DebugInspector shared] important:@"display path received author=%@ text=%@ enabled=%d", message.authorName ?: @"", message.text ?: @"", [SettingsManager shared].enabled];
+    if (![SettingsManager shared].enabled && ![self isSystemMessage:message]) return;
     if ([self isSystemMessage:message]) {
         [self showSystemToast:message.text];
         return;
     }
     [self ensureOverlayAttached];
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
-    if (!overlay || !overlay.superview) return;
+    if (!overlay || !overlay.superview) overlay = [self ensureResilientFallbackOverlay];
+    if (!overlay || !overlay.superview) {
+        [[DebugInspector shared] important:@"display path failed: no overlay superview"];
+        return;
+    }
+    overlay.hidden = NO;
+    overlay.alpha = 1.0;
+    [overlay.superview bringSubviewToFront:overlay];
     [overlay enqueueMessage:message];
+    [[DebugInspector shared] log:@"display path enqueued message=%@", message.messageId ?: @""];
 }
 @end
 
