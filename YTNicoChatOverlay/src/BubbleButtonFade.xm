@@ -4,28 +4,70 @@
 #import "DebugInspector.h"
 
 static const void *kYTNicoBubbleFadeArmedKey = &kYTNicoBubbleFadeArmedKey;
+static NSTimeInterval const kYTNicoBubbleFullHideDelay = 5.0;
+static NSInteger gYTNicoBubbleFadeGeneration = 0;
+static NSHashTable<UIButton *> *gYTNicoBubbleButtons = nil;
+
+static BOOL YTNicoIsYouTubeProcess(void) {
+    return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
+}
 
 static BOOL YTNicoIsBubbleButton(UIButton *button) {
-    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return NO;
+    if (!YTNicoIsYouTubeProcess()) return NO;
     if (![button isKindOfClass:UIButton.class]) return NO;
     NSString *title = [button titleForState:UIControlStateNormal] ?: @"";
     if (![title isEqualToString:@"💬"] && ![title isEqualToString:@"💭"]) return NO;
     CGRect f = button.frame;
-    if (fabs(f.size.width - 44.0) > 8.0 || fabs(f.size.height - 44.0) > 8.0) return NO;
-    if (![button.superview isKindOfClass:UIWindow.class]) return NO;
+    if (fabs(f.size.width - 44.0) > 10.0 || fabs(f.size.height - 44.0) > 10.0) return NO;
     return YES;
 }
 
-static CGFloat YTNicoBubbleIdleAlpha(UIButton *button) {
-    NSString *title = [button titleForState:UIControlStateNormal] ?: @"";
-    if ([title isEqualToString:@"💭"]) return 0.20;
-    return 0.32;
+static void YTNicoRegisterBubbleButton(UIButton *button) {
+    if (!YTNicoIsBubbleButton(button)) return;
+    if (!gYTNicoBubbleButtons) gYTNicoBubbleButtons = [NSHashTable weakObjectsHashTable];
+    [gYTNicoBubbleButtons addObject:button];
 }
 
-static void YTNicoScheduleBubbleFade(UIButton *button) {
-    if (!YTNicoIsBubbleButton(button)) return;
-    [NSObject cancelPreviousPerformRequestsWithTarget:button selector:@selector(ytnico_applyIdleBubbleFade) object:nil];
-    [button performSelector:@selector(ytnico_applyIdleBubbleFade) withObject:nil afterDelay:3.0];
+static NSArray<UIButton *> *YTNicoRegisteredBubbleButtons(void) {
+    if (!gYTNicoBubbleButtons) return @[];
+    NSMutableArray<UIButton *> *alive = [NSMutableArray array];
+    for (UIButton *button in gYTNicoBubbleButtons) {
+        if (YTNicoIsBubbleButton(button) && button.window) [alive addObject:button];
+    }
+    return alive;
+}
+
+static void YTNicoSetRegisteredBubbleAlpha(CGFloat alpha, BOOL animated) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSArray<UIButton *> *buttons = YTNicoRegisteredBubbleButtons();
+        if (buttons.count == 0) return;
+        void (^changes)(void) = ^{
+            for (UIButton *button in buttons) {
+                button.hidden = NO;
+                button.userInteractionEnabled = YES;
+                button.alpha = alpha;
+            }
+        };
+        if (animated) {
+            [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:changes completion:nil];
+        } else {
+            changes();
+        }
+    });
+}
+
+static void YTNicoScheduleBubbleFullHide(void) {
+    NSInteger generation = ++gYTNicoBubbleFadeGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kYTNicoBubbleFullHideDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (generation != gYTNicoBubbleFadeGeneration) return;
+        YTNicoSetRegisteredBubbleAlpha(0.0, YES);
+    });
+}
+
+static void YTNicoShowBubbleAndRestartIdleTimer(void) {
+    if (!YTNicoIsYouTubeProcess()) return;
+    YTNicoSetRegisteredBubbleAlpha(0.96, YES);
+    YTNicoScheduleBubbleFullHide();
 }
 
 %hook UIButton
@@ -33,45 +75,64 @@ static void YTNicoScheduleBubbleFade(UIButton *button) {
 - (void)didMoveToSuperview {
     %orig;
     if (!YTNicoIsBubbleButton(self)) return;
+    YTNicoRegisterBubbleButton(self);
     if (![objc_getAssociatedObject(self, kYTNicoBubbleFadeArmedKey) boolValue]) {
         objc_setAssociatedObject(self, kYTNicoBubbleFadeArmedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        [[DebugInspector shared] log:@"bubble fade armed"];
+        [[DebugInspector shared] log:@"bubble full idle fade armed"];
     }
-    YTNicoScheduleBubbleFade(self);
+    YTNicoShowBubbleAndRestartIdleTimer();
 }
 
-- (void)layoutSubviews {
+- (void)didMoveToWindow {
     %orig;
-    if (YTNicoIsBubbleButton(self)) YTNicoScheduleBubbleFade(self);
+    if (!YTNicoIsBubbleButton(self)) return;
+    YTNicoRegisterBubbleButton(self);
+    YTNicoShowBubbleAndRestartIdleTimer();
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    if (YTNicoIsBubbleButton(self)) {
-        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(ytnico_applyIdleBubbleFade) object:nil];
-        [UIView animateWithDuration:0.12 animations:^{ self.alpha = 0.96; }];
-    }
+    if (YTNicoIsBubbleButton(self)) YTNicoShowBubbleAndRestartIdleTimer();
     %orig(touches, event);
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     %orig(touches, event);
-    if (YTNicoIsBubbleButton(self)) YTNicoScheduleBubbleFade(self);
+    if (YTNicoIsBubbleButton(self)) YTNicoShowBubbleAndRestartIdleTimer();
 }
 
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     %orig(touches, event);
-    if (YTNicoIsBubbleButton(self)) YTNicoScheduleBubbleFade(self);
-}
-
-%new
-- (void)ytnico_applyIdleBubbleFade {
-    if (!YTNicoIsBubbleButton(self)) return;
-    if (self.highlighted || self.tracking) {
-        YTNicoScheduleBubbleFade(self);
-        return;
-    }
-    CGFloat alpha = YTNicoBubbleIdleAlpha(self);
-    [UIView animateWithDuration:0.35 animations:^{ self.alpha = alpha; }];
+    if (YTNicoIsBubbleButton(self)) YTNicoShowBubbleAndRestartIdleTimer();
 }
 
 %end
+
+%hook UIWindow
+
+- (void)sendEvent:(UIEvent *)event {
+    %orig;
+    if (!YTNicoIsYouTubeProcess()) return;
+    NSSet<UITouch *> *touches = [event allTouches];
+    if (touches.count == 0) return;
+    for (UITouch *touch in touches) {
+        if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseEnded) {
+            YTNicoShowBubbleAndRestartIdleTimer();
+            break;
+        }
+    }
+}
+
+%end
+
+%ctor {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!YTNicoIsYouTubeProcess()) return;
+        gYTNicoBubbleButtons = [NSHashTable weakObjectsHashTable];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+            YTNicoShowBubbleAndRestartIdleTimer();
+        }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+            YTNicoShowBubbleAndRestartIdleTimer();
+        }];
+    });
+}
