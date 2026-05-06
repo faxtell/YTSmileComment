@@ -4,6 +4,7 @@ static NSString * const kYTNicoTutorialDomain = @"com.example.yt-nico-chat-overl
 static NSString * const kYTNicoTutorialShownKey = @"tutorial.shown.v1";
 static NSString * const kYTNicoLicenseReadyKey = @"ready.v1";
 static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.until";
+static NSString * const kYTNicoTutorialClosedUntilKey = @"tutorial.closed.until";
 
 @interface YTNicoTutorialViewController : UIViewController
 + (BOOL)shouldShowTutorial;
@@ -35,12 +36,18 @@ static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.un
 }
 
 + (BOOL)shouldShowTutorial {
-    return ![[self defaults] boolForKey:kYTNicoTutorialShownKey];
+    NSUserDefaults *d = [self defaults];
+    NSTimeInterval closedUntil = [d doubleForKey:kYTNicoTutorialClosedUntilKey];
+    if (closedUntil > [NSDate.date timeIntervalSince1970]) return NO;
+    return ![d boolForKey:kYTNicoTutorialShownKey];
 }
 
 + (void)markTutorialShown {
     NSUserDefaults *d = [self defaults];
+    NSTimeInterval now = [NSDate.date timeIntervalSince1970];
     [d setBool:YES forKey:kYTNicoTutorialShownKey];
+    [d setDouble:now + 120.0 forKey:kYTNicoTutorialClosedUntilKey];
+    [d setDouble:now + 120.0 forKey:kYTNicoSuppressTutorialUntilKey];
     [d synchronize];
 }
 
@@ -52,6 +59,14 @@ static BOOL YTNicoLicenseReady(void) {
     return [YTNicoTutorialDefaults() boolForKey:kYTNicoLicenseReadyKey];
 }
 
+static void YTNicoMarkTutorialClosedCooldown(void) {
+    NSUserDefaults *d = YTNicoTutorialDefaults();
+    NSTimeInterval now = [NSDate.date timeIntervalSince1970];
+    [d setDouble:now + 120.0 forKey:kYTNicoTutorialClosedUntilKey];
+    [d setDouble:now + 120.0 forKey:kYTNicoSuppressTutorialUntilKey];
+    [d synchronize];
+}
+
 static BOOL YTNicoTutorialCheckLicense(NSString *input) {
     NSString *trimmed = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
     NSData *given = [trimmed dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
@@ -61,7 +76,11 @@ static BOOL YTNicoTutorialCheckLicense(NSString *input) {
 
 static void YTNicoTutorialSetReady(void) {
     NSUserDefaults *d = YTNicoTutorialDefaults();
+    NSTimeInterval now = [NSDate.date timeIntervalSince1970];
     [d setBool:YES forKey:kYTNicoLicenseReadyKey];
+    [d setBool:YES forKey:kYTNicoTutorialShownKey];
+    [d setDouble:now + 120.0 forKey:kYTNicoTutorialClosedUntilKey];
+    [d setDouble:now + 120.0 forKey:kYTNicoSuppressTutorialUntilKey];
     [d setBool:YES forKey:@"enabled"];
     [d synchronize];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"com.example.ytnico.settings.changed" object:nil];
@@ -403,11 +422,13 @@ static void YTNicoSuppressTutorialForSeconds(NSTimeInterval seconds) {
 
 - (void)skipTutorial {
     if (!YTNicoLicenseReady()) return;
+    YTNicoMarkTutorialClosedCooldown();
     [YTNicoTutorialViewController markTutorialShown];
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 - (void)closeTutorial {
+    YTNicoMarkTutorialClosedCooldown();
     [YTNicoTutorialViewController markTutorialShown];
     [self dismissViewControllerAnimated:YES completion:nil];
 }
