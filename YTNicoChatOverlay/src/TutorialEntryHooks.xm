@@ -14,7 +14,9 @@
 
 static NSString * const kYTNicoTutorialGateDomain = @"com.example.yt-nico-chat-overlay";
 static NSString * const kYTNicoTutorialLicenseReadyKey = @"ready.v1";
+static NSString * const kYTNicoTutorialShownKey = @"tutorial.shown.v1";
 static NSString * const kYTNicoSuppressTutorialUntilKey = @"tutorial.suppress.until";
+static NSString * const kYTNicoTutorialClosedUntilKey = @"tutorial.closed.until";
 static const NSInteger kYTNicoTutorialButtonTag = 950531;
 static BOOL gYTNicoTutorialPresentedThisActiveSession = NO;
 static BOOL gYTNicoTutorialObserverInstalled = NO;
@@ -27,9 +29,16 @@ static BOOL YTNicoTutorialLicenseReady(void) {
     return [YTNicoTutorialDefaults() boolForKey:kYTNicoTutorialLicenseReadyKey];
 }
 
+static BOOL YTNicoTutorialShown(void) {
+    return [YTNicoTutorialDefaults() boolForKey:kYTNicoTutorialShownKey];
+}
+
 static BOOL YTNicoTutorialSuppressedNow(void) {
-    NSTimeInterval until = [YTNicoTutorialDefaults() doubleForKey:kYTNicoSuppressTutorialUntilKey];
-    return until > [NSDate.date timeIntervalSince1970];
+    NSUserDefaults *d = YTNicoTutorialDefaults();
+    NSTimeInterval now = [NSDate.date timeIntervalSince1970];
+    NSTimeInterval until = [d doubleForKey:kYTNicoSuppressTutorialUntilKey];
+    NSTimeInterval closedUntil = [d doubleForKey:kYTNicoTutorialClosedUntilKey];
+    return until > now || closedUntil > now;
 }
 
 static UIViewController *YTNicoTopViewControllerFrom(UIViewController *vc) {
@@ -68,24 +77,27 @@ static BOOL YTNicoTopAlreadyTutorial(UIViewController *vc) {
     return [name rangeOfString:@"YTNicoTutorialViewController"].location != NSNotFound;
 }
 
-static void YTNicoPresentTutorialIfNeeded(BOOL forceBecauseUnlicensed) {
-    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
+static BOOL YTNicoShouldBlockTutorialPresentation(BOOL forceBecauseUnlicensed) {
+    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return YES;
+    if (YTNicoTutorialSuppressedNow()) return YES;
     BOOL licensed = YTNicoTutorialLicenseReady();
-    if (licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
-    if (!forceBecauseUnlicensed && licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
-    if (forceBecauseUnlicensed && licensed) return;
-    if (forceBecauseUnlicensed && YTNicoTutorialSuppressedNow()) {
-        [[DebugInspector shared] log:@"tutorial presentation suppressed by cooldown"];
+    BOOL shown = YTNicoTutorialShown();
+    if (licensed && shown) return YES;
+    if (licensed && ![YTNicoTutorialViewController shouldShowTutorial]) return YES;
+    if (forceBecauseUnlicensed && licensed) return YES;
+    if (!forceBecauseUnlicensed && ![YTNicoTutorialViewController shouldShowTutorial]) return YES;
+    return NO;
+}
+
+static void YTNicoPresentTutorialIfNeeded(BOOL forceBecauseUnlicensed) {
+    if (YTNicoShouldBlockTutorialPresentation(forceBecauseUnlicensed)) {
+        [[DebugInspector shared] log:@"tutorial presentation blocked force=%d", forceBecauseUnlicensed];
         return;
     }
     if (gYTNicoTutorialPresentedThisActiveSession && forceBecauseUnlicensed) return;
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.85 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]) return;
-        BOOL nowLicensed = YTNicoTutorialLicenseReady();
-        if (forceBecauseUnlicensed && nowLicensed) return;
-        if (forceBecauseUnlicensed && YTNicoTutorialSuppressedNow()) return;
-        if (!forceBecauseUnlicensed && nowLicensed && ![YTNicoTutorialViewController shouldShowTutorial]) return;
+        if (YTNicoShouldBlockTutorialPresentation(forceBecauseUnlicensed)) return;
         if (gYTNicoTutorialPresentedThisActiveSession && forceBecauseUnlicensed) return;
 
         UIWindow *window = YTNicoKeyWindow();
@@ -97,7 +109,7 @@ static void YTNicoPresentTutorialIfNeeded(BOOL forceBecauseUnlicensed) {
         vc.modalPresentationStyle = UIModalPresentationFullScreen;
         [top presentViewController:vc animated:YES completion:nil];
         gYTNicoTutorialPresentedThisActiveSession = YES;
-        [[DebugInspector shared] important:@"tutorial presented on app active unlicensed=%d", !nowLicensed];
+        [[DebugInspector shared] important:@"tutorial presented force=%d licensed=%d shown=%d", forceBecauseUnlicensed, YTNicoTutorialLicenseReady(), YTNicoTutorialShown()];
     });
 }
 
@@ -105,7 +117,7 @@ static void YTNicoInstallTutorialObserver(void) {
     if (gYTNicoTutorialObserverInstalled) return;
     gYTNicoTutorialObserverInstalled = YES;
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-        gYTNicoTutorialPresentedThisActiveSession = NO;
+        if (!YTNicoTutorialSuppressedNow()) gYTNicoTutorialPresentedThisActiveSession = NO;
         if (!YTNicoTutorialLicenseReady()) YTNicoPresentTutorialIfNeeded(YES);
     }];
     [[DebugInspector shared] log:@"tutorial launch observer installed"];
