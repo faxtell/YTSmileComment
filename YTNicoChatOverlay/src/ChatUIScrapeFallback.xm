@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import "YouTubeChatAdapter.h"
 #import "SettingsManager.h"
 #import "DebugInspector.h"
@@ -12,6 +13,24 @@ static BOOL gYTNicoUIScrapeEnabled = YES;
 
 static BOOL YTNicoUIScrapeIsYouTube(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
+}
+
+static BOOL YTNicoObjectResponds(id obj, SEL sel) {
+    return obj && [(NSObject *)obj respondsToSelector:sel];
+}
+
+static UIView *YTNicoViewFromNode(id node) {
+    if (!YTNicoObjectResponds(node, @selector(view))) return nil;
+    UIView *(*send)(id, SEL) = (UIView *(*)(id, SEL))objc_msgSend;
+    UIView *view = send(node, @selector(view));
+    return [view isKindOfClass:UIView.class] ? view : nil;
+}
+
+static NSAttributedString *YTNicoAttributedTextFromNode(id node) {
+    if (!YTNicoObjectResponds(node, @selector(attributedText))) return nil;
+    NSAttributedString *(*send)(id, SEL) = (NSAttributedString *(*)(id, SEL))objc_msgSend;
+    NSAttributedString *attr = send(node, @selector(attributedText));
+    return [attr isKindOfClass:NSAttributedString.class] ? attr : nil;
 }
 
 static NSString *YTNicoUIScrapeTrim(NSString *s) {
@@ -35,7 +54,7 @@ static NSString *YTNicoUIScrapeClassPath(UIView *view, NSInteger maxDepth) {
     UIView *v = view;
     NSInteger depth = 0;
     while (v && depth < maxDepth) {
-        [parts addObject:NSStringFromClass(v.class) ?: @""];
+        [parts addObject:NSStringFromClass(object_getClass(v)) ?: @""];
         v = v.superview;
         depth++;
     }
@@ -45,10 +64,6 @@ static NSString *YTNicoUIScrapeClassPath(UIView *view, NSInteger maxDepth) {
 static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
     NSString *path = YTNicoUIScrapeClassPath(view, 14);
     if (YTNicoUIScrapeContainsAny(path, @[@"livechat", @"live_chat", @"ytlive", @"chat", @"replay", @"conversation", @"message", @"comment"])) return YES;
-
-    // Fallback for AsyncDisplayKit-heavy YouTube cells: chat replay rows are often
-    // text-heavy small cells near the right/bottom panel. Only allow this if the text
-    // view is inside a table/collection-like hierarchy.
     if (YTNicoUIScrapeContainsAny(path, @[@"table", @"collection", @"asdisplay", @"cell", @"renderer"]) &&
         YTNicoUIScrapeContainsAny(path, @[@"yt", @"youtube", @"watch"])) return YES;
     return NO;
@@ -89,7 +104,6 @@ static NSString *YTNicoUIScrapeAuthorCandidate(void) {
         NSString *t = gYTNicoUIScrapeRecentTexts[(NSUInteger)i];
         if (t.length == 0 || t.length > 42) continue;
         if (YTNicoUIScrapeRejectText(t) || YTNicoUIScrapeLooksLikeMetadataOnly(t)) continue;
-        // Names tend to be short and not sentence-like. This is a heuristic only.
         if ([t rangeOfString:@"。"].location != NSNotFound || [t rangeOfString:@"！"].location != NSNotFound || [t rangeOfString:@"？"].location != NSNotFound) continue;
         return t;
     }
@@ -99,6 +113,7 @@ static NSString *YTNicoUIScrapeAuthorCandidate(void) {
 static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
     if (!YTNicoUIScrapeIsYouTube() || !gYTNicoUIScrapeEnabled) return;
     if (!SettingsManager.shared.enabled) return;
+    if (![sourceView isKindOfClass:UIView.class]) return;
     NSString *text = YTNicoUIScrapeTrim(rawText);
     if (YTNicoUIScrapeRejectText(text) || YTNicoUIScrapeLooksLikeMetadataOnly(text)) return;
     if (!YTNicoUIScrapeLooksLikeChatHierarchy(sourceView)) return;
@@ -149,14 +164,12 @@ static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
 
 %end
 
-// AsyncDisplayKit / Texture text nodes used heavily inside YouTube.
 %hook ASTextNode
 
 - (void)setAttributedText:(NSAttributedString *)attributedText {
     %orig(attributedText);
     NSString *text = attributedText.string ?: @"";
-    UIView *view = nil;
-    if ([self respondsToSelector:@selector(view)]) view = ((UIView *(*)(id, SEL))objc_msgSend)(self, @selector(view));
+    UIView *view = YTNicoViewFromNode((id)self);
     if (text.length > 0 && view) YTNicoUIScrapeEmitText(text, view);
 }
 
@@ -166,16 +179,13 @@ static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
 
 - (void)didEnterVisibleState {
     %orig;
-    if (![self respondsToSelector:@selector(view)]) return;
-    UIView *view = ((UIView *(*)(id, SEL))objc_msgSend)(self, @selector(view));
+    id node = (id)self;
+    UIView *view = YTNicoViewFromNode(node);
     if (!view) return;
-    NSString *className = NSStringFromClass(self.class);
+    NSString *className = NSStringFromClass(object_getClass(node));
     if (!YTNicoUIScrapeContainsAny(className, @[@"text", @"label", @"message", @"chat", @"comment"])) return;
-    NSString *desc = @"";
-    if ([self respondsToSelector:@selector(attributedText)]) {
-        NSAttributedString *attr = ((NSAttributedString *(*)(id, SEL))objc_msgSend)(self, @selector(attributedText));
-        desc = attr.string ?: @"";
-    }
+    NSAttributedString *attr = YTNicoAttributedTextFromNode(node);
+    NSString *desc = attr.string ?: @"";
     if (desc.length > 0) YTNicoUIScrapeEmitText(desc, view);
 }
 
