@@ -62,12 +62,42 @@ static NSString *YTNicoUIScrapeClassPath(UIView *view, NSInteger maxDepth) {
     return [parts componentsJoinedByString:@"/"];
 }
 
-static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
-    NSString *path = YTNicoUIScrapeClassPath(view, 16);
+static BOOL YTNicoUIScrapeIsInsideChatSheetByGeometry(UIView *view) {
+    if (!view.window) return NO;
+    CGRect r = [view convertRect:view.bounds toView:view.window];
+    CGRect w = view.window.bounds;
+    if (CGRectIsEmpty(r) || w.size.height <= 0 || w.size.width <= 0) return NO;
 
-    // Strong allow-list only. The previous broad ASDisplay/watch/cell fallback also
-    // caught video titles and descriptions, so do not allow generic watch metadata.
-    BOOL hasChatSignal = YTNicoUIScrapeContainsAny(path, @[
+    // Chat replay sheet in portrait lives below the player, roughly lower half.
+    BOOL lowerHalf = CGRectGetMidY(r) > w.size.height * 0.42;
+    BOOL notTiny = r.size.height >= 8.0 && r.size.width >= 24.0;
+    BOOL withinSideMargins = CGRectGetMinX(r) >= -8.0 && CGRectGetMaxX(r) <= w.size.width + 8.0;
+    return lowerHalf && notTiny && withinSideMargins;
+}
+
+static BOOL YTNicoUIScrapeLooksLikeMetadataPath(NSString *path) {
+    return YTNicoUIScrapeContainsAny(path, @[
+        @"description",
+        @"metadata",
+        @"metadataview",
+        @"title",
+        @"watchmetadata",
+        @"videoowner",
+        @"slimvideo",
+        @"expandablemetadata",
+        @"engagementpaneldescription",
+        @"infopanel",
+        @"compactvideo",
+        @"related",
+        @"thumbnail"
+    ]);
+}
+
+static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
+    NSString *path = YTNicoUIScrapeClassPath(view, 18);
+    if (YTNicoUIScrapeLooksLikeMetadataPath(path)) return NO;
+
+    BOOL strongChatSignal = YTNicoUIScrapeContainsAny(path, @[
         @"livechat",
         @"live_chat",
         @"ytlivechat",
@@ -80,24 +110,16 @@ static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
         @"replaychat",
         @"conversationbar"
     ]);
-    if (!hasChatSignal) return NO;
+    if (strongChatSignal) return YES;
 
-    // Explicitly block video metadata / title / description panels even if a generic
-    // ancestor happens to include words like renderer or comment.
-    if (YTNicoUIScrapeContainsAny(path, @[
-        @"description",
-        @"metadata",
-        @"metadataview",
-        @"title",
-        @"watchmetadata",
-        @"videoowner",
-        @"slimvideo",
-        @"expandablemetadata",
-        @"engagementpaneldescription",
-        @"infopanel"
-    ])) return NO;
+    // YouTube often uses generic ASDisplayView / UICollectionView cells for replay rows.
+    // Permit those only when they are in the lower chat sheet area. This restores UI
+    // scrape without reopening the video title / description panel.
+    BOOL genericRow = YTNicoUIScrapeContainsAny(path, @[@"asdisplay", @"collection", @"table", @"cell", @"renderer", @"stack"]);
+    BOOL youtubeView = YTNicoUIScrapeContainsAny(path, @[@"yt", @"youtube", @"asdisplay"]);
+    if (genericRow && youtubeView && YTNicoUIScrapeIsInsideChatSheetByGeometry(view)) return YES;
 
-    return YES;
+    return NO;
 }
 
 static BOOL YTNicoUIScrapeRejectText(NSString *text) {
@@ -124,12 +146,29 @@ static NSString *YTNicoStripLeadingHandleFromLine(NSString *line) {
     line = YTNicoUIScrapeTrim(line);
     if (![line hasPrefix:@"@"]) return line;
 
-    NSCharacterSet *separators = [NSCharacterSet characterSetWithCharactersInString:@" \t　:：-－—–|｜・"];
-    NSRange sep = [line rangeOfCharacterFromSet:separators options:0 range:NSMakeRange(1, line.length - 1)];
-    if (sep.location == NSNotFound) return @"";
+    NSRegularExpression *withSep = [NSRegularExpression regularExpressionWithPattern:@"^@[^\\s　:：]+[\\s　:：-－—–|｜・]+(.+)$" options:0 error:nil];
+    NSTextCheckingResult *m = [withSep firstMatchInString:line options:0 range:NSMakeRange(0, line.length)];
+    if (m && m.numberOfRanges >= 2) return YTNicoUIScrapeTrim([line substringWithRange:[m rangeAtIndex:1]]);
 
-    NSString *rest = [line substringFromIndex:NSMaxRange(sep)];
-    return YTNicoUIScrapeTrim(rest);
+    // Handles in YouTube can be Japanese and sometimes get concatenated with body.
+    // If a sentence-looking part starts after the handle, keep it.
+    NSArray<NSString *> *sentenceMarks = @[@"楽", @"嬉", @"待", @"来", @"行", @"や", @"わ", @"す", @"こ", @"つ", @"久", @"立", @"キ", @"！", @"？", @"ー", @"〜", @"～"];
+    for (NSString *mark in sentenceMarks) {
+        NSRange r = [line rangeOfString:mark options:0 range:NSMakeRange(1, line.length - 1)];
+        if (r.location != NSNotFound && r.location > 2) {
+            NSString *rest = [line substringFromIndex:r.location];
+            if (rest.length >= 1) return YTNicoUIScrapeTrim(rest);
+        }
+    }
+
+    return @"";
+}
+
+static BOOL YTNicoLooksLikeAuthorLine(NSString *line) {
+    if (line.length == 0 || line.length > 46) return NO;
+    if ([line hasPrefix:@"@"]) return YES;
+    if ([line rangeOfString:@"。"].location != NSNotFound || [line rangeOfString:@"！"].location != NSNotFound || [line rangeOfString:@"？"].location != NSNotFound) return NO;
+    return YES;
 }
 
 static NSString *YTNicoUIScrapeCommentBodyOnly(NSString *rawText) {
@@ -147,31 +186,12 @@ static NSString *YTNicoUIScrapeCommentBodyOnly(NSString *rawText) {
     }
 
     if (lines.count == 0) return @"";
-
-    // Common YouTube chat UI forms:
-    //   Display Name
-    //   @handle
-    //   comment body
-    // or a compact form that contains @handle before the body.
-    if (lines.count >= 3) {
-        NSString *first = lines[0];
-        NSString *second = lines[1];
-        BOOL firstLooksAuthor = first.length <= 42 && [first rangeOfString:@"。"].location == NSNotFound && [first rangeOfString:@"！"].location == NSNotFound && [first rangeOfString:@"？"].location == NSNotFound;
-        BOOL secondLooksAuthor = second.length <= 42 && [second rangeOfString:@"。"].location == NSNotFound && [second rangeOfString:@"！"].location == NSNotFound && [second rangeOfString:@"？"].location == NSNotFound;
-        if (firstLooksAuthor && secondLooksAuthor) {
-            NSArray *bodyLines = [lines subarrayWithRange:NSMakeRange(2, lines.count - 2)];
-            return YTNicoUIScrapeTrim([bodyLines componentsJoinedByString:@" "]);
-        }
+    if (lines.count >= 3 && YTNicoLooksLikeAuthorLine(lines[0]) && YTNicoLooksLikeAuthorLine(lines[1])) {
+        return YTNicoUIScrapeTrim([[lines subarrayWithRange:NSMakeRange(2, lines.count - 2)] componentsJoinedByString:@" "]);
     }
-
-    if (lines.count >= 2) {
-        NSString *first = lines[0];
-        NSString *second = lines[1];
-        BOOL firstLooksAuthor = first.length <= 42 && [first rangeOfString:@"。"].location == NSNotFound && [first rangeOfString:@"！"].location == NSNotFound && [first rangeOfString:@"？"].location == NSNotFound;
-        BOOL secondLooksBody = second.length > 0 && !YTNicoUIScrapeLooksLikeMetadataOnly(second);
-        if (firstLooksAuthor && secondLooksBody) return YTNicoUIScrapeTrim([[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@" "]);
+    if (lines.count >= 2 && YTNicoLooksLikeAuthorLine(lines[0])) {
+        return YTNicoUIScrapeTrim([[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@" "]);
     }
-
     return YTNicoUIScrapeTrim([lines componentsJoinedByString:@" "]);
 }
 
@@ -273,6 +293,6 @@ static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
         if (!YTNicoUIScrapeIsYouTube()) return;
         gYTNicoUIScrapeSeen = [NSMutableDictionary dictionary];
         gYTNicoUIScrapeRecentTexts = [NSMutableArray array];
-        [[DebugInspector shared] important:@"UI chat scrape fallback loaded strict body-only mode"];
+        [[DebugInspector shared] important:@"UI chat scrape fallback loaded balanced body-only mode"];
     });
 }
