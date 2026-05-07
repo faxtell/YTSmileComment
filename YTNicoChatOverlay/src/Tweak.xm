@@ -425,7 +425,7 @@ static const void *kToastKey = &kToastKey;
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
     if (!overlay.superview) overlay = [self ensureResilientFallbackOverlay];
     if (!overlay.superview) return;
-    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:NSUUID.UUIDString authorName:@"YTNico" text:@"表示テスト: これが流れればOverlayは正常です" timestamp:NSDate.date];
+    NicoChatMessage *msg = [[NicoChatMessage alloc] initWithId:[[NSUUID UUID] UUIDString] authorName:@"YTNico" text:@"表示テスト: これが流れればOverlayは正常です" timestamp:NSDate.date];
     [overlay enqueueMessage:msg];
 }
 
