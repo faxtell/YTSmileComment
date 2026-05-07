@@ -1,10 +1,13 @@
 #import <UIKit/UIKit.h>
 #import <math.h>
 #import "DebugInspector.h"
+#import "SettingsManager.h"
 
 @interface YTNicoController : NSObject
 - (CGFloat)scorePlayerCandidate:(UIView *)view;
 @end
+
+static CFTimeInterval gYTNicoLastOverlayCandidateLog = 0;
 
 %hook YTNicoController
 
@@ -45,7 +48,14 @@
     if ([className containsString:@"player"] || [className containsString:@"watch"] || [className containsString:@"video"]) score += 28.0;
     if ([className containsString:@"cell"] && !largeTopPortraitPlayer && !fullscreenLandscapePlayer) score -= 8.0;
 
-    [[DebugInspector shared] log:@"overlay candidate %@ rect=%@ score=%.1f", NSStringFromClass(view.class), NSStringFromCGRect(rect), score];
+    // Candidate scoring runs very often during YouTube layout. Logging every candidate
+    // makes the debug screen unusable and can slow UI work, so only log notable matches
+    // at a low rate.
+    CFTimeInterval now = CACurrentMediaTime();
+    if (score >= 285.0 && now - gYTNicoLastOverlayCandidateLog > 2.0) {
+        gYTNicoLastOverlayCandidateLog = now;
+        [[DebugInspector shared] log:@"overlay candidate top %@ rect=%@ score=%.1f", NSStringFromClass(view.class), NSStringFromCGRect(rect), score];
+    }
     return score;
 }
 
