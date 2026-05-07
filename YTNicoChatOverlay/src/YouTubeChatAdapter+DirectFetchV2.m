@@ -37,9 +37,15 @@ static const NSInteger YTV2MaxLivePolls = 180;
 
     NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         if (![self ytv2_gen:generation]) return;
-        if (error || data.length == 0) return;
+        if (error || data.length == 0) {
+            [self ytv2_fetchJSONFallbackForVideoId:videoId apiKey:@"" version:@"2.20250101.01.00" generation:generation reason:@"watch html failed"];
+            return;
+        }
         NSString *html = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        if (html.length == 0) return;
+        if (html.length == 0) {
+            [self ytv2_fetchJSONFallbackForVideoId:videoId apiKey:@"" version:@"2.20250101.01.00" generation:generation reason:@"watch html empty"];
+            return;
+        }
         [self ytv2_processHTML:html videoId:videoId generation:generation];
     }];
     [task resume];
@@ -49,12 +55,18 @@ static const NSInteger YTV2MaxLivePolls = 180;
     NSString *apiKey = [self ytv2_first:html patterns:@[@"\"INNERTUBE_API_KEY\"\\s*:\\s*\"([^\"]+)\"", @"\\\"INNERTUBE_API_KEY\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""]];
     NSString *ver = [self ytv2_first:html patterns:@[@"\"INNERTUBE_CLIENT_VERSION\"\\s*:\\s*\"([^\"]+)\"", @"\\\"INNERTUBE_CLIENT_VERSION\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""]];
     if (ver.length == 0) ver = @"2.20250101.01.00";
-    if (apiKey.length == 0) return;
+    if (apiKey.length == 0) {
+        [self ytv2_fetchJSONFallbackForVideoId:videoId apiKey:@"" version:ver generation:generation reason:@"api key missing"];
+        return;
+    }
 
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/next?key=%@", apiKey]];
     NSDictionary *body = @{@"context":[self ytv2_context:ver], @"videoId":videoId ?: @""};
     [self ytv2_post:url body:body completion:^(NSString *text) {
-        if (![self ytv2_gen:generation] || text.length == 0) return;
+        if (![self ytv2_gen:generation] || text.length == 0) {
+            [self ytv2_fetchJSONFallbackForVideoId:videoId apiKey:apiKey version:ver generation:generation reason:@"next json empty"];
+            return;
+        }
 
         NSString *combined = [NSString stringWithFormat:@"%@\n%@", html ?: @"", text ?: @""];
         BOOL explicitLive = [self ytv2_isExplicitLiveNow:combined];
@@ -88,9 +100,96 @@ static const NSInteger YTV2MaxLivePolls = 180;
             [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"通常コメントを取得します" messageId:NSUUID.UUID.UUIDString];
             [self ytv2_fetchComments:apiKey version:ver token:token page:1 emitted:emitted generation:generation];
         } else if (emitted == 0) {
-            [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"取得結果: コメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+            [self ytv2_fetchJSONFallbackForVideoId:videoId apiKey:apiKey version:ver generation:generation reason:@"next parsed zero"];
         }
     }];
+}
+
++ (void)ytv2_fetchJSONFallbackForVideoId:(NSString *)videoId apiKey:(NSString *)apiKey version:(NSString *)ver generation:(NSUInteger)generation reason:(NSString *)reason {
+    if (![self ytv2_gen:generation] || videoId.length != 11) return;
+    ver = ver.length ? ver : @"2.20250101.01.00";
+    [[DebugInspector shared] important:@"JSON fallback start videoId=%@ reason=%@", videoId, reason ?: @"unknown"];
+    [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"JSONフォールバックでコメント取得を試します" messageId:NSUUID.UUID.UUIDString];
+
+    NSMutableArray<NSURL *> *urls = [NSMutableArray array];
+    [urls addObject:[NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/watch?pbj=1&v=%@&hl=ja&persist_hl=1", videoId]]];
+    [urls addObject:[NSURL URLWithString:[NSString stringWithFormat:@"https://m.youtube.com/watch?pbj=1&v=%@&hl=ja&persist_hl=1", videoId]]];
+    [urls addObject:[NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/watch?v=%@&pbj=1&app=desktop&hl=ja", videoId]]];
+    [self ytv2_tryJSONFallbackURLs:urls index:0 videoId:videoId apiKey:apiKey version:ver generation:generation];
+}
+
++ (void)ytv2_tryJSONFallbackURLs:(NSArray<NSURL *> *)urls index:(NSUInteger)index videoId:(NSString *)videoId apiKey:(NSString *)apiKey version:(NSString *)ver generation:(NSUInteger)generation {
+    if (![self ytv2_gen:generation]) return;
+    if (index >= urls.count) {
+        if (apiKey.length > 0) {
+            [self ytv2_fetchInnertubeJSONFallbackForVideoId:videoId apiKey:apiKey version:ver generation:generation];
+        } else {
+            [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"JSONフォールバックでもコメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+        }
+        return;
+    }
+
+    NSURL *url = urls[index];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.timeoutInterval = 16.0;
+    [req setValue:@"1" forHTTPHeaderField:@"X-YTNico-DirectFetch"];
+    [req setValue:@"application/json, text/plain, */*" forHTTPHeaderField:@"Accept"];
+    [req setValue:@"1" forHTTPHeaderField:@"X-YouTube-Client-Name"];
+    [req setValue:ver ?: @"2.20250101.01.00" forHTTPHeaderField:@"X-YouTube-Client-Version"];
+    [req setValue:@"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" forHTTPHeaderField:@"User-Agent"];
+    [req setValue:@"ja,en-US;q=0.9,en;q=0.8" forHTTPHeaderField:@"Accept-Language"];
+
+    [[NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (![self ytv2_gen:generation]) return;
+        NSString *text = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
+        NSInteger emitted = text.length ? [self ytv2_parseFallbackJSONText:text videoId:videoId apiKey:apiKey version:ver generation:generation] : 0;
+        [[DebugInspector shared] log:@"JSON fallback url index=%lu emitted=%ld len=%lu error=%@", (unsigned long)index, (long)emitted, (unsigned long)text.length, error.localizedDescription ?: @""];
+        if (emitted > 0) {
+            [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:[NSString stringWithFormat:@"JSONフォールバックで%ld件検出しました", (long)emitted] messageId:NSUUID.UUID.UUIDString];
+            return;
+        }
+        [self ytv2_tryJSONFallbackURLs:urls index:index + 1 videoId:videoId apiKey:apiKey version:ver generation:generation];
+    }] resume];
+}
+
++ (void)ytv2_fetchInnertubeJSONFallbackForVideoId:(NSString *)videoId apiKey:(NSString *)apiKey version:(NSString *)ver generation:(NSUInteger)generation {
+    if (![self ytv2_gen:generation] || apiKey.length == 0) return;
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://www.youtube.com/youtubei/v1/player?key=%@", apiKey]];
+    NSDictionary *body = @{@"context":[self ytv2_context:ver], @"videoId":videoId ?: @"", @"playbackContext":@{@"contentPlaybackContext":@{@"html5Preference":@"HTML5_PREF_WANTS"}}};
+    [self ytv2_post:url body:body completion:^(NSString *text) {
+        if (![self ytv2_gen:generation]) return;
+        NSInteger emitted = [self ytv2_parseFallbackJSONText:text ?: @"" videoId:videoId apiKey:apiKey version:ver generation:generation];
+        if (emitted > 0) {
+            [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:[NSString stringWithFormat:@"Innertube JSONで%ld件検出しました", (long)emitted] messageId:NSUUID.UUID.UUIDString];
+        } else {
+            [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"JSONフォールバックでもコメントを検出できませんでした" messageId:NSUUID.UUID.UUIDString];
+        }
+    }];
+}
+
++ (NSInteger)ytv2_parseFallbackJSONText:(NSString *)text videoId:(NSString *)videoId apiKey:(NSString *)apiKey version:(NSString *)ver generation:(NSUInteger)generation {
+    if (![self ytv2_gen:generation] || text.length == 0) return 0;
+    BOOL replay = [self ytv2_hasReplaySignal:text];
+    BOOL liveCandidate = [self ytv2_isLiveNow:text] || [self ytv2_hasLiveEndpoint:text];
+    NSString *liveToken = liveCandidate ? [self ytv2_strictLiveToken:text] : @"";
+    NSString *replayToken = replay ? [self ytv2_strictReplayToken:text] : @"";
+
+    if (SettingsManager.shared.preferLiveChat && apiKey.length > 0 && liveCandidate && liveToken.length > 0 && !replay) {
+        [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"JSONからライブチャット継続IDを検出しました" messageId:NSUUID.UUID.UUIDString];
+        [self ytv2_pollLive:apiKey version:ver token:liveToken poll:0 generation:generation];
+        return 1;
+    }
+    if (SettingsManager.shared.preferLiveChat && apiKey.length > 0 && replay && replayToken.length > 0) {
+        [YouTubeChatAdapter emitNowAuthor:@"YTNico" text:@"JSONからチャットリプレイ継続IDを検出しました" messageId:NSUUID.UUID.UUIDString];
+        [self ytv2_fetchReplay:apiKey version:ver token:replayToken page:0 emitted:0 generation:generation];
+        return 1;
+    }
+
+    NSInteger emitted = 0;
+    emitted += [self ytv2_parseNormal:text max:90 live:YES generation:generation];
+    emitted += [self ytv2_parseReplay:text max:160 generation:generation];
+    emitted += [self ytv2_parseNormal:text max:90 live:NO generation:generation];
+    return emitted;
 }
 
 + (NSDictionary *)ytv2_context:(NSString *)ver { return @{@"client":@{@"clientName":@"WEB", @"clientVersion":ver ?: @"2.20250101.01.00", @"hl":@"ja", @"gl":@"JP"}}; }
