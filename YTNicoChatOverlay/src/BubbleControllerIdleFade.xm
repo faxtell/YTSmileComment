@@ -158,13 +158,22 @@ static void YTNicoScheduleControllerBubbleHide(void) {
     });
 }
 
-static void YTNicoShowRegisteredControllerBubbles(void) {
+static void YTNicoShowRegisteredControllerBubblesFromUserTouch(void) {
     if (!YTNicoControllerBubbleIsYouTube()) return;
     for (UIButton *button in YTNicoAliveControllerBubbleButtons()) {
         objc_setAssociatedObject(button, kYTNicoControllerBubbleIdleHiddenKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         YTNicoApplyBubbleAlpha(button, YTNicoVisibleAlphaForBubble(button), YES);
     }
     YTNicoScheduleControllerBubbleHide();
+}
+
+static void YTNicoKeepBubbleCurrentIdleState(UIButton *button) {
+    if (!button) return;
+    if ([objc_getAssociatedObject(button, kYTNicoControllerBubbleIdleHiddenKey) boolValue]) {
+        button.hidden = NO;
+        button.userInteractionEnabled = YES;
+        button.alpha = 0.0;
+    }
 }
 
 @interface YTNicoBubblePanHandler : NSObject <UIGestureRecognizerDelegate>
@@ -175,7 +184,7 @@ static void YTNicoShowRegisteredControllerBubbles(void) {
     UIButton *button = (UIButton *)pan.view;
     if (![button isKindOfClass:UIButton.class]) return;
     if (pan.state == UIGestureRecognizerStateBegan) {
-        YTNicoShowRegisteredControllerBubbles();
+        YTNicoShowRegisteredControllerBubblesFromUserTouch();
     }
     CGPoint translation = [pan translationInView:button.superview];
     if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
@@ -188,7 +197,7 @@ static void YTNicoShowRegisteredControllerBubbles(void) {
     }
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled || pan.state == UIGestureRecognizerStateFailed) {
         YTNicoSaveBubblePosition(button);
-        YTNicoShowRegisteredControllerBubbles();
+        YTNicoShowRegisteredControllerBubblesFromUserTouch();
     }
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
@@ -214,11 +223,14 @@ static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
     button.accessibilityLabel = @"YTNico コメント表示 吹き出し";
     YTNicoInstallBubblePan(button);
     YTNicoApplySavedBubblePosition(button);
-    if (![objc_getAssociatedObject(button, kYTNicoControllerBubbleRegisteredKey) boolValue]) {
+    BOOL firstRegister = ![objc_getAssociatedObject(button, kYTNicoControllerBubbleRegisteredKey) boolValue];
+    if (firstRegister) {
         objc_setAssociatedObject(button, kYTNicoControllerBubbleRegisteredKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(button, kYTNicoControllerBubbleIdleHiddenKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        YTNicoScheduleControllerBubbleHide();
+    } else {
+        YTNicoKeepBubbleCurrentIdleState(button);
     }
-    YTNicoShowRegisteredControllerBubbles();
 }
 
 %hook YTNicoController
@@ -235,9 +247,7 @@ static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
     if (!button) return;
     YTNicoRegisterControllerBubbleButton(button);
     YTNicoApplySavedBubblePosition(button);
-    if ([objc_getAssociatedObject(button, kYTNicoControllerBubbleIdleHiddenKey) boolValue]) {
-        button.alpha = 0.0;
-    }
+    YTNicoKeepBubbleCurrentIdleState(button);
 }
 
 %end
@@ -250,8 +260,8 @@ static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
     NSSet<UITouch *> *touches = [event allTouches];
     if (touches.count == 0) return;
     for (UITouch *touch in touches) {
-        if (touch.phase == UITouchPhaseBegan || touch.phase == UITouchPhaseMoved || touch.phase == UITouchPhaseEnded) {
-            YTNicoShowRegisteredControllerBubbles();
+        if (touch.phase == UITouchPhaseBegan) {
+            YTNicoShowRegisteredControllerBubblesFromUserTouch();
             break;
         }
     }
@@ -264,7 +274,10 @@ static void YTNicoRegisterControllerBubbleButton(UIButton *button) {
         if (!YTNicoControllerBubbleIsYouTube()) return;
         gYTNicoControllerBubbleButtons = [NSHashTable weakObjectsHashTable];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-            for (UIButton *button in YTNicoAliveControllerBubbleButtons()) YTNicoApplySavedBubblePosition(button);
+            for (UIButton *button in YTNicoAliveControllerBubbleButtons()) {
+                YTNicoApplySavedBubblePosition(button);
+                YTNicoKeepBubbleCurrentIdleState(button);
+            }
         }];
     });
 }
