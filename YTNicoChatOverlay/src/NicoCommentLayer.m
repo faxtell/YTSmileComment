@@ -4,6 +4,46 @@
 
 @implementation NicoCommentLayer
 
+static NSString *YTNicoTrimText(NSString *s) {
+    if (![s isKindOfClass:NSString.class]) return @"";
+    s = [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    while ([s rangeOfString:@"  "].location != NSNotFound) {
+        s = [s stringByReplacingOccurrencesOfString:@"  " withString:@" "];
+    }
+    return s ?: @"";
+}
+
+static BOOL YTNicoLooksLikeAtHandle(NSString *s) {
+    s = YTNicoTrimText(s);
+    if (![s hasPrefix:@"@"] || s.length < 2) return NO;
+    if ([s rangeOfString:@" "].location != NSNotFound || [s rangeOfString:@"　"].location != NSNotFound) return NO;
+    if (s.length > 48) return NO;
+    return YES;
+}
+
+static NSString *YTNicoStripLeadingAtHandle(NSString *text) {
+    text = YTNicoTrimText(text);
+    if (![text hasPrefix:@"@"]) return text;
+
+    // @handle: body / @handle body / @handle　body
+    NSRegularExpression *basic = [NSRegularExpression regularExpressionWithPattern:@"^@[^\\s　:：]+[\\s　:：-－—–|｜・]+(.+)$" options:0 error:nil];
+    NSTextCheckingResult *m = [basic firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
+    if (m && m.numberOfRanges >= 2) return YTNicoTrimText([text substringWithRange:[m rangeAtIndex:1]]);
+
+    // If YouTube collapsed the username and body without a visible separator, try to
+    // remove a typical ASCII handle prefix and leave the Japanese/body portion.
+    NSRegularExpression *ascii = [NSRegularExpression regularExpressionWithPattern:@"^@[A-Za-z0-9._-]{2,32}(.+)$" options:0 error:nil];
+    m = [ascii firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
+    if (m && m.numberOfRanges >= 2) {
+        NSString *rest = YTNicoTrimText([text substringWithRange:[m rangeAtIndex:1]]);
+        if (rest.length > 0) return rest;
+    }
+
+    // If it is only the handle, do not render it as a comment.
+    if (YTNicoLooksLikeAtHandle(text)) return @"";
+    return text;
+}
+
 static CGFloat YTNicoEffectiveCommentOpacity(NSString *text, CGFloat configuredOpacity, SettingsManager *settings) {
     CGFloat op = MAX(0.15, MIN(1.0, configuredOpacity));
     if (!settings.niconicoMode) return op;
@@ -19,11 +59,18 @@ static CGFloat YTNicoEffectiveCommentOpacity(NSString *text, CGFloat configuredO
 }
 
 - (void)configureWithMessage:(NicoChatMessage *)message fontSize:(CGFloat)fontSize opacity:(CGFloat)opacity {
-    NSString *text = message.text ?: @"";
+    NSString *text = YTNicoStripLeadingAtHandle(message.text ?: @"");
     SettingsManager *settings = [SettingsManager shared];
-    if (settings.showAuthorName && message.authorName.length > 0) {
-        text = [NSString stringWithFormat:@"%@: %@", message.authorName, text];
+    NSString *author = YTNicoTrimText(message.authorName ?: @"");
+
+    // YouTube chat/replay authors are usually @handles. For Niconico-style display,
+    // never prepend @handles; render only the comment body.
+    BOOL authorIsHandle = YTNicoLooksLikeAtHandle(author) || [author hasPrefix:@"@"];
+    if (settings.showAuthorName && author.length > 0 && !authorIsHandle) {
+        text = [NSString stringWithFormat:@"%@: %@", author, text];
     }
+
+    if (text.length == 0) text = @" ";
 
     CGFloat effectiveOpacity = YTNicoEffectiveCommentOpacity(text, opacity, settings);
     UIColor *fillColor = (message.colorHint ?: UIColor.whiteColor);
