@@ -35,6 +35,7 @@ static NSAttributedString *YTNicoAttributedTextFromNode(id node) {
 
 static NSString *YTNicoUIScrapeTrim(NSString *s) {
     if (![s isKindOfClass:NSString.class]) return @"";
+    s = [s stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
     s = [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     while ([s rangeOfString:@"  "].location != NSNotFound) s = [s stringByReplacingOccurrencesOfString:@"  " withString:@" "];
     while ([s rangeOfString:@"\n\n"].location != NSNotFound) s = [s stringByReplacingOccurrencesOfString:@"\n\n" withString:@"\n"];
@@ -62,11 +63,41 @@ static NSString *YTNicoUIScrapeClassPath(UIView *view, NSInteger maxDepth) {
 }
 
 static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
-    NSString *path = YTNicoUIScrapeClassPath(view, 14);
-    if (YTNicoUIScrapeContainsAny(path, @[@"livechat", @"live_chat", @"ytlive", @"chat", @"replay", @"conversation", @"message", @"comment"])) return YES;
-    if (YTNicoUIScrapeContainsAny(path, @[@"table", @"collection", @"asdisplay", @"cell", @"renderer"]) &&
-        YTNicoUIScrapeContainsAny(path, @[@"yt", @"youtube", @"watch"])) return YES;
-    return NO;
+    NSString *path = YTNicoUIScrapeClassPath(view, 16);
+
+    // Strong allow-list only. The previous broad ASDisplay/watch/cell fallback also
+    // caught video titles and descriptions, so do not allow generic watch metadata.
+    BOOL hasChatSignal = YTNicoUIScrapeContainsAny(path, @[
+        @"livechat",
+        @"live_chat",
+        @"ytlivechat",
+        @"ytlive",
+        @"chatreplay",
+        @"livechatreplay",
+        @"chatmessage",
+        @"livechatmessage",
+        @"livechatitem",
+        @"replaychat",
+        @"conversationbar"
+    ]);
+    if (!hasChatSignal) return NO;
+
+    // Explicitly block video metadata / title / description panels even if a generic
+    // ancestor happens to include words like renderer or comment.
+    if (YTNicoUIScrapeContainsAny(path, @[
+        @"description",
+        @"metadata",
+        @"metadataview",
+        @"title",
+        @"watchmetadata",
+        @"videoowner",
+        @"slimvideo",
+        @"expandablemetadata",
+        @"engagementpaneldescription",
+        @"infopanel"
+    ])) return NO;
+
+    return YES;
 }
 
 static BOOL YTNicoUIScrapeRejectText(NSString *text) {
@@ -84,7 +115,64 @@ static BOOL YTNicoUIScrapeLooksLikeMetadataOnly(NSString *text) {
     if ([timeOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
     NSRegularExpression *countOnly = [NSRegularExpression regularExpressionWithPattern:@"^[0-9,.万億]+\\s*(回視聴|人が視聴中|件|日前|時間前|分前)$" options:0 error:nil];
     if ([countOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
+    NSRegularExpression *handleOnly = [NSRegularExpression regularExpressionWithPattern:@"^@[^\\s　:：]+$" options:0 error:nil];
+    if ([handleOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
     return NO;
+}
+
+static NSString *YTNicoStripLeadingHandleFromLine(NSString *line) {
+    line = YTNicoUIScrapeTrim(line);
+    if (![line hasPrefix:@"@"]) return line;
+
+    NSCharacterSet *separators = [NSCharacterSet characterSetWithCharactersInString:@" \t　:：-－—–|｜・"];
+    NSRange sep = [line rangeOfCharacterFromSet:separators options:0 range:NSMakeRange(1, line.length - 1)];
+    if (sep.location == NSNotFound) return @"";
+
+    NSString *rest = [line substringFromIndex:NSMaxRange(sep)];
+    return YTNicoUIScrapeTrim(rest);
+}
+
+static NSString *YTNicoUIScrapeCommentBodyOnly(NSString *rawText) {
+    NSString *text = YTNicoUIScrapeTrim(rawText);
+    if (text.length == 0) return @"";
+
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *lineRaw in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+        NSString *line = YTNicoUIScrapeTrim(lineRaw);
+        if (line.length == 0) continue;
+        line = YTNicoStripLeadingHandleFromLine(line);
+        if (line.length == 0) continue;
+        if (YTNicoUIScrapeRejectText(line) || YTNicoUIScrapeLooksLikeMetadataOnly(line)) continue;
+        [lines addObject:line];
+    }
+
+    if (lines.count == 0) return @"";
+
+    // Common YouTube chat UI forms:
+    //   Display Name
+    //   @handle
+    //   comment body
+    // or a compact form that contains @handle before the body.
+    if (lines.count >= 3) {
+        NSString *first = lines[0];
+        NSString *second = lines[1];
+        BOOL firstLooksAuthor = first.length <= 42 && [first rangeOfString:@"。"].location == NSNotFound && [first rangeOfString:@"！"].location == NSNotFound && [first rangeOfString:@"？"].location == NSNotFound;
+        BOOL secondLooksAuthor = second.length <= 42 && [second rangeOfString:@"。"].location == NSNotFound && [second rangeOfString:@"！"].location == NSNotFound && [second rangeOfString:@"？"].location == NSNotFound;
+        if (firstLooksAuthor && secondLooksAuthor) {
+            NSArray *bodyLines = [lines subarrayWithRange:NSMakeRange(2, lines.count - 2)];
+            return YTNicoUIScrapeTrim([bodyLines componentsJoinedByString:@" "]);
+        }
+    }
+
+    if (lines.count >= 2) {
+        NSString *first = lines[0];
+        NSString *second = lines[1];
+        BOOL firstLooksAuthor = first.length <= 42 && [first rangeOfString:@"。"].location == NSNotFound && [first rangeOfString:@"！"].location == NSNotFound && [first rangeOfString:@"？"].location == NSNotFound;
+        BOOL secondLooksBody = second.length > 0 && !YTNicoUIScrapeLooksLikeMetadataOnly(second);
+        if (firstLooksAuthor && secondLooksBody) return YTNicoUIScrapeTrim([[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@" "]);
+    }
+
+    return YTNicoUIScrapeTrim([lines componentsJoinedByString:@" "]);
 }
 
 static void YTNicoUIScrapePruneSeen(void) {
@@ -99,31 +187,20 @@ static void YTNicoUIScrapePruneSeen(void) {
     while (gYTNicoUIScrapeRecentTexts.count > 24) [gYTNicoUIScrapeRecentTexts removeObjectAtIndex:0];
 }
 
-static NSString *YTNicoUIScrapeAuthorCandidate(void) {
-    for (NSInteger i = (NSInteger)gYTNicoUIScrapeRecentTexts.count - 1; i >= 0; i--) {
-        NSString *t = gYTNicoUIScrapeRecentTexts[(NSUInteger)i];
-        if (t.length == 0 || t.length > 42) continue;
-        if (YTNicoUIScrapeRejectText(t) || YTNicoUIScrapeLooksLikeMetadataOnly(t)) continue;
-        if ([t rangeOfString:@"。"].location != NSNotFound || [t rangeOfString:@"！"].location != NSNotFound || [t rangeOfString:@"？"].location != NSNotFound) continue;
-        return t;
-    }
-    return @"chat";
-}
-
 static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
     if (!YTNicoUIScrapeIsYouTube() || !gYTNicoUIScrapeEnabled) return;
     if (!SettingsManager.shared.enabled) return;
     if (![sourceView isKindOfClass:UIView.class]) return;
-    NSString *text = YTNicoUIScrapeTrim(rawText);
-    if (YTNicoUIScrapeRejectText(text) || YTNicoUIScrapeLooksLikeMetadataOnly(text)) return;
     if (!YTNicoUIScrapeLooksLikeChatHierarchy(sourceView)) return;
+
+    NSString *text = YTNicoUIScrapeCommentBodyOnly(rawText);
+    if (YTNicoUIScrapeRejectText(text) || YTNicoUIScrapeLooksLikeMetadataOnly(text)) return;
 
     if (!gYTNicoUIScrapeSeen) gYTNicoUIScrapeSeen = [NSMutableDictionary dictionary];
     if (!gYTNicoUIScrapeRecentTexts) gYTNicoUIScrapeRecentTexts = [NSMutableArray array];
     YTNicoUIScrapePruneSeen();
 
-    NSString *author = YTNicoUIScrapeAuthorCandidate();
-    NSString *key = [NSString stringWithFormat:@"%@|%@", author ?: @"", text ?: @""];
+    NSString *key = text ?: @"";
     if (gYTNicoUIScrapeSeen[key]) {
         [gYTNicoUIScrapeRecentTexts addObject:text];
         while (gYTNicoUIScrapeRecentTexts.count > 24) [gYTNicoUIScrapeRecentTexts removeObjectAtIndex:0];
@@ -134,12 +211,12 @@ static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
     while (gYTNicoUIScrapeRecentTexts.count > 24) [gYTNicoUIScrapeRecentTexts removeObjectAtIndex:0];
 
     NSString *mid = [NSString stringWithFormat:@"ui-%lu-%llu", (unsigned long)[key hash], (unsigned long long)(CACurrentMediaTime() * 1000.0)];
-    [YouTubeChatAdapter emitNowAuthor:author.length ? author : @"chat" text:text messageId:mid];
+    [YouTubeChatAdapter emitNowAuthor:@"" text:text messageId:mid];
 
     CFTimeInterval now = CACurrentMediaTime();
     if (now - gYTNicoLastUIScrapeLog > 1.0) {
         gYTNicoLastUIScrapeLog = now;
-        [[DebugInspector shared] important:@"UI scrape emitted author=%@ text=%@ path=%@", author ?: @"", text ?: @"", YTNicoUIScrapeClassPath(sourceView, 6)];
+        [[DebugInspector shared] important:@"UI scrape emitted body=%@ path=%@", text ?: @"", YTNicoUIScrapeClassPath(sourceView, 6)];
     }
 }
 
@@ -196,6 +273,6 @@ static void YTNicoUIScrapeEmitText(NSString *rawText, UIView *sourceView) {
         if (!YTNicoUIScrapeIsYouTube()) return;
         gYTNicoUIScrapeSeen = [NSMutableDictionary dictionary];
         gYTNicoUIScrapeRecentTexts = [NSMutableArray array];
-        [[DebugInspector shared] important:@"UI chat scrape fallback loaded"];
+        [[DebugInspector shared] important:@"UI chat scrape fallback loaded strict body-only mode"];
     });
 }
