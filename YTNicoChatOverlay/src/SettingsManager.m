@@ -25,6 +25,7 @@ static NSString * const kDidMigrateNiconicoDefaults = @"didMigrateNiconicoDefaul
             if (![_defaults objectForKey:@"outlineStrength"]) [_defaults setDouble:3.0 forKey:@"outlineStrength"];
             if (![_defaults objectForKey:@"scrollDuration"]) [_defaults setDouble:5.2 forKey:@"scrollDuration"];
             if (![_defaults objectForKey:@"showAuthorName"]) [_defaults setBool:NO forKey:@"showAuthorName"];
+            if (![_defaults objectForKey:@"uiScrapeFallback"]) [_defaults setBool:YES forKey:@"uiScrapeFallback"];
             [_defaults setBool:YES forKey:kDidMigrateNiconicoDefaults];
             [_defaults synchronize];
         }
@@ -55,6 +56,7 @@ static NSString * const kDidMigrateNiconicoDefaults = @"didMigrateNiconicoDefaul
 - (BOOL)syncReplayToTimestamp { return [_defaults objectForKey:@"syncReplayToTimestamp"] ? [_defaults boolForKey:@"syncReplayToTimestamp"] : YES; }
 - (BOOL)preferLiveChat { return [_defaults objectForKey:@"preferLiveChat"] ? [_defaults boolForKey:@"preferLiveChat"] : YES; }
 - (BOOL)autoFetch { return [_defaults objectForKey:@"autoFetch"] ? [_defaults boolForKey:@"autoFetch"] : YES; }
+- (BOOL)uiScrapeFallback { return [_defaults objectForKey:@"uiScrapeFallback"] ? [_defaults boolForKey:@"uiScrapeFallback"] : YES; }
 - (NSInteger)maxFetchComments { return [_defaults objectForKey:@"maxFetchComments"] ? [_defaults integerForKey:@"maxFetchComments"] : 500; }
 
 - (void)setEnabled:(BOOL)value { [_defaults setBool:value forKey:@"enabled"]; [self notifyChanged]; }
@@ -77,6 +79,7 @@ static NSString * const kDidMigrateNiconicoDefaults = @"didMigrateNiconicoDefaul
 - (void)setSyncReplayToTimestamp:(BOOL)value { [_defaults setBool:value forKey:@"syncReplayToTimestamp"]; [self notifyChanged]; }
 - (void)setPreferLiveChat:(BOOL)value { [_defaults setBool:value forKey:@"preferLiveChat"]; [self notifyChanged]; }
 - (void)setAutoFetch:(BOOL)value { [_defaults setBool:value forKey:@"autoFetch"]; [self notifyChanged]; }
+- (void)setUiScrapeFallback:(BOOL)value { [_defaults setBool:value forKey:@"uiScrapeFallback"]; [self notifyChanged]; }
 - (void)setMaxFetchComments:(NSInteger)value { [_defaults setInteger:MAX(100, MIN(3000, value)) forKey:@"maxFetchComments"]; [self notifyChanged]; }
 
 - (void)applyNiconicoPreset {
@@ -85,6 +88,7 @@ static NSString * const kDidMigrateNiconicoDefaults = @"didMigrateNiconicoDefaul
     [_defaults setBool:YES forKey:@"enableOutline"];
     [_defaults setBool:YES forKey:@"enableShadow"];
     [_defaults setBool:NO forKey:@"showAuthorName"];
+    [_defaults setBool:YES forKey:@"uiScrapeFallback"];
     [_defaults setDouble:3.2 forKey:@"outlineStrength"];
     [_defaults setDouble:5.2 forKey:@"scrollDuration"];
     [_defaults setDouble:0.95 forKey:@"opacity"];
