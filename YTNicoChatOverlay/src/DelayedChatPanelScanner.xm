@@ -6,6 +6,9 @@
 static BOOL gYTNicoManualScanRunning = NO;
 static NSUInteger gYTNicoManualEmitCount = 0;
 static CFTimeInterval gYTNicoManualLastLog = 0;
+static NSTimer *gYTNicoManualWatchTimer = nil;
+static NSString *gYTNicoManualWatchVideoId = nil;
+static NSMutableDictionary<NSString *, NSNumber *> *gYTNicoManualSeen = nil;
 
 typedef NSDictionary<NSString *, id> YTNicoTextItem;
 
@@ -206,6 +209,9 @@ static CGFloat YTNicoManualInferPanelTop(UIWindow *win, NSArray<YTNicoTextItem *
 
 static NSString *YTNicoManualBodyFromChatRow(NSArray<YTNicoTextItem *> *rowItems) {
     NSArray<YTNicoTextItem *> *sorted = [rowItems sortedArrayUsingComparator:^NSComparisonResult(YTNicoTextItem *a, YTNicoTextItem *b) {
+        CGFloat ay = [a[@"y"] doubleValue];
+        CGFloat by = [b[@"y"] doubleValue];
+        if (fabs(ay - by) > 9.0) return ay < by ? NSOrderedAscending : NSOrderedDescending;
         CGFloat ax = [a[@"x"] doubleValue];
         CGFloat bx = [b[@"x"] doubleValue];
         if (ax < bx) return NSOrderedAscending;
@@ -242,12 +248,37 @@ static NSString *YTNicoManualBodyFromChatRow(NSArray<YTNicoTextItem *> *rowItems
     return YTNicoManualTrim([parts componentsJoinedByString:@" "]);
 }
 
+static NSString *YTNicoManualFingerprintForRow(NSArray<YTNicoTextItem *> *rowItems, NSString *body) {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (YTNicoTextItem *item in rowItems) {
+        NSString *text = YTNicoManualTrim(item[@"text"] ?: @"");
+        if (text.length > 0) [parts addObject:text];
+    }
+    NSString *joined = [parts componentsJoinedByString:@"|"] ?: @"";
+    if (joined.length == 0) joined = body ?: @"";
+    return joined;
+}
+
+static void YTNicoManualPruneSeen(void) {
+    if (!gYTNicoManualSeen) gYTNicoManualSeen = [NSMutableDictionary dictionary];
+    CFTimeInterval now = CACurrentMediaTime();
+    NSMutableArray<NSString *> *remove = [NSMutableArray array];
+    for (NSString *key in gYTNicoManualSeen) {
+        if (now - gYTNicoManualSeen[key].doubleValue > 90.0) [remove addObject:key];
+    }
+    [gYTNicoManualSeen removeObjectsForKeys:remove];
+}
+
 static void YTNicoManualEmit(NSString *body, NSString *key, NSMutableSet<NSString *> *emitted) {
     body = YTNicoManualTrim(body);
     if (body.length == 0 || YTNicoManualLooksLikeMetadata(body)) return;
+    if (!gYTNicoManualSeen) gYTNicoManualSeen = [NSMutableDictionary dictionary];
+    YTNicoManualPruneSeen();
+
     NSString *seenKey = [NSString stringWithFormat:@"%@|%@", key ?: @"manual", body];
-    if ([emitted containsObject:seenKey]) return;
+    if ([emitted containsObject:seenKey] || gYTNicoManualSeen[seenKey]) return;
     [emitted addObject:seenKey];
+    gYTNicoManualSeen[seenKey] = @(CACurrentMediaTime());
 
     NSString *mid = [NSString stringWithFormat:@"manualui-%lu-%llu", (unsigned long)[seenKey hash], (unsigned long long)(CACurrentMediaTime() * 1000.0)];
     [YouTubeChatAdapter emitNowAuthor:@"" text:body messageId:mid];
@@ -280,30 +311,46 @@ static void YTNicoManualScanWindow(UIWindow *win, NSMutableSet<NSString *> *emit
         if (YTNicoManualHasHandleToken(text)) [handles addObject:item];
     }
 
-    for (YTNicoTextItem *handleItem in handles) {
+    NSArray<YTNicoTextItem *> *sortedHandles = [handles sortedArrayUsingComparator:^NSComparisonResult(YTNicoTextItem *a, YTNicoTextItem *b) {
+        CGFloat ay = [a[@"y"] doubleValue];
+        CGFloat by = [b[@"y"] doubleValue];
+        if (ay < by) return NSOrderedAscending;
+        if (ay > by) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+
+    for (NSUInteger i = 0; i < sortedHandles.count; i++) {
+        YTNicoTextItem *handleItem = sortedHandles[i];
         CGFloat hy = [handleItem[@"y"] doubleValue];
         CGFloat hx = [handleItem[@"x"] doubleValue];
+        CGFloat prevY = (i > 0) ? [sortedHandles[i - 1][@"y"] doubleValue] : panelTop;
+        CGFloat nextY = (i + 1 < sortedHandles.count) ? [sortedHandles[i + 1][@"y"] doubleValue] : MIN(wb.size.height, hy + 58.0);
+        CGFloat top = MAX(panelTop, (prevY + hy) / 2.0 - 4.0);
+        CGFloat bottom = MIN(wb.size.height - 8.0, (hy + nextY) / 2.0 + 4.0);
+        if (bottom - top < 34.0) bottom = MIN(wb.size.height - 8.0, top + 42.0);
+
         NSMutableArray<YTNicoTextItem *> *row = [NSMutableArray array];
         for (YTNicoTextItem *item in all) {
             CGFloat y = [item[@"y"] doubleValue];
             CGFloat x = [item[@"x"] doubleValue];
             NSString *text = item[@"text"] ?: @"";
-            if (fabs(y - hy) > 18.0) continue;
-            if (x < hx - 12.0 || x > wb.size.width + 30.0) continue;
+            if (y < top || y > bottom) continue;
+            if (x < hx - 18.0 || x > wb.size.width + 30.0) continue;
             if (YTNicoManualLooksLikeMetadata(text)) continue;
             [row addObject:item];
         }
         NSString *body = YTNicoManualBodyFromChatRow(row);
         if (body.length == 0) continue;
-        NSString *key = [NSString stringWithFormat:@"manual-handle-%ld", (long)round(hy / 24.0)];
+        NSString *fingerprint = YTNicoManualFingerprintForRow(row, body);
+        NSString *key = [NSString stringWithFormat:@"manual-row-%lu-%lu", (unsigned long)[fingerprint hash], (unsigned long)round(hy / 24.0)];
         YTNicoManualEmit(body, key, emitted);
     }
 }
 
-extern "C" NSUInteger YTNicoManualScanVisibleChatPanel(void) {
+static NSUInteger YTNicoManualScanVisibleChatPanelInternal(void) {
     if (![NSThread isMainThread]) {
         __block NSUInteger count = 0;
-        dispatch_sync(dispatch_get_main_queue(), ^{ count = YTNicoManualScanVisibleChatPanel(); });
+        dispatch_sync(dispatch_get_main_queue(), ^{ count = YTNicoManualScanVisibleChatPanelInternal(); });
         return count;
     }
     if (gYTNicoManualScanRunning) return 0;
@@ -322,9 +369,67 @@ extern "C" NSUInteger YTNicoManualScanVisibleChatPanel(void) {
     return gYTNicoManualEmitCount;
 }
 
+static void YTNicoManualWatchTick(void) {
+    if (!SettingsManager.shared.enabled || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
+        return;
+    }
+    NSString *currentVideoId = [YouTubeChatAdapter currentVideoId] ?: @"";
+    if (gYTNicoManualWatchVideoId.length == 11 && currentVideoId.length == 11 && ![currentVideoId isEqualToString:gYTNicoManualWatchVideoId]) {
+        if (gYTNicoManualWatchTimer) {
+            [gYTNicoManualWatchTimer invalidate];
+            gYTNicoManualWatchTimer = nil;
+        }
+        gYTNicoManualWatchVideoId = nil;
+        [gYTNicoManualSeen removeAllObjects];
+        [[DebugInspector shared] important:@"manual chat watch stopped: video changed"];
+        return;
+    }
+    YTNicoManualScanVisibleChatPanelInternal();
+}
+
+extern "C" NSUInteger YTNicoManualScanVisibleChatPanel(void) {
+    return YTNicoManualScanVisibleChatPanelInternal();
+}
+
+extern "C" void YTNicoStartManualChatPanelWatch(NSString *videoId) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ YTNicoStartManualChatPanelWatch(videoId); });
+        return;
+    }
+    if (!YTNicoManualIsYouTube()) return;
+    if (!gYTNicoManualSeen) gYTNicoManualSeen = [NSMutableDictionary dictionary];
+    [gYTNicoManualSeen removeAllObjects];
+    gYTNicoManualWatchVideoId = [videoId copy];
+    if (gYTNicoManualWatchTimer) [gYTNicoManualWatchTimer invalidate];
+    gYTNicoManualWatchTimer = [NSTimer scheduledTimerWithTimeInterval:0.90 repeats:YES block:^(__unused NSTimer *timer) {
+        YTNicoManualWatchTick();
+    }];
+    [[NSRunLoop mainRunLoop] addTimer:gYTNicoManualWatchTimer forMode:NSDefaultRunLoopMode];
+    [[DebugInspector shared] important:@"manual chat watch started videoId=%@", gYTNicoManualWatchVideoId ?: @""];
+}
+
+extern "C" void YTNicoStopManualChatPanelWatch(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ YTNicoStopManualChatPanelWatch(); });
+        return;
+    }
+    if (gYTNicoManualWatchTimer) {
+        [gYTNicoManualWatchTimer invalidate];
+        gYTNicoManualWatchTimer = nil;
+    }
+    gYTNicoManualWatchVideoId = nil;
+    [gYTNicoManualSeen removeAllObjects];
+    [[DebugInspector shared] important:@"manual chat watch stopped"];
+}
+
+extern "C" BOOL YTNicoManualChatPanelWatchIsActive(void) {
+    return gYTNicoManualWatchTimer != nil;
+}
+
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!YTNicoManualIsYouTube()) return;
-        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"manual chat scanner loaded handle-row mode"];
+        gYTNicoManualSeen = [NSMutableDictionary dictionary];
+        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"manual chat scanner loaded watch mode"];
     });
 }
