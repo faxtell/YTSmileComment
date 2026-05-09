@@ -89,12 +89,11 @@ jobs:
           set -euo pipefail
           rm -rf dist
           mkdir -p dist
-          mapfile -t debs < <(find YTNicoChatOverlay/packages YTNicoChatOverlay/.theos/packages -maxdepth 1 -type f -name "*.deb" -print 2>/dev/null | sort -u)
-          if [ "${#debs[@]}" -eq 0 ]; then
+          latest="$(find YTNicoChatOverlay/packages YTNicoChatOverlay/.theos/packages -maxdepth 1 -type f -name "*.deb" -print 2>/dev/null | xargs ls -t 2>/dev/null | head -n 1 || true)"
+          if [ -z "$latest" ]; then
             echo "No .deb files found" >&2
             exit 1
           fi
-          latest="$(ls -t "${debs[@]}" | head -n 1)"
           cp -f "$latest" dist/YTNicoChatOverlay.deb
           echo "Selected artifact source: $latest"
           echo "Single direct artifact: dist/YTNicoChatOverlay.deb"
