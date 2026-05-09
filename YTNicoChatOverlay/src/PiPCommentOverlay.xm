@@ -11,6 +11,11 @@ static UIView *gYTNicoPiPOverlayView = nil;
 static NSUInteger gYTNicoPiPLaneCursor = 0;
 static NSMutableSet<NSString *> *gYTNicoPiPSeenIds = nil;
 
+static BOOL YTNicoPiPIsYouTubeForeground(void) {
+    return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"] &&
+           UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+}
+
 static BOOL YTNicoStringContainsAny(NSString *s, NSArray<NSString *> *needles) {
     for (NSString *n in needles) {
         if ([s rangeOfString:n options:NSCaseInsensitiveSearch].location != NSNotFound) return YES;
@@ -70,9 +75,30 @@ static CGRect YTNicoDefaultPiPOverlayFrame(void) {
     return CGRectMake(x, y, width, height);
 }
 
+static void YTNicoPiPDetachOverlay(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [gYTNicoPiPOverlayView removeFromSuperview];
+        gYTNicoPiPOverlayView = nil;
+        gYTNicoPiPOverlayWindow.hidden = YES;
+        gYTNicoPiPOverlayWindow = nil;
+        gYTNicoPiPLaneCursor = 0;
+        [gYTNicoPiPSeenIds removeAllObjects];
+    });
+}
+
 static void YTNicoPiPAttachOverlay(void) {
     if (!gYTNicoPiPActive || !SettingsManager.shared.enabled) return;
     dispatch_async(dispatch_get_main_queue(), ^{
+        // YouTubeアプリが前面の時は、通常の動画Overlayを最優先にする。
+        // PiP用の高いwindowを作ると、アプリ内Overlayより前面に出てしまうため抑制する。
+        if (YTNicoPiPIsYouTubeForeground()) {
+            [gYTNicoPiPOverlayView removeFromSuperview];
+            gYTNicoPiPOverlayView = nil;
+            gYTNicoPiPOverlayWindow.hidden = YES;
+            gYTNicoPiPOverlayWindow = nil;
+            return;
+        }
+
         UIWindow *pipWindow = YTNicoFindPiPWindow();
         if (pipWindow) {
             if (!gYTNicoPiPOverlayView || gYTNicoPiPOverlayView.superview != pipWindow) {
@@ -118,17 +144,6 @@ static void YTNicoPiPAttachOverlay(void) {
     });
 }
 
-static void YTNicoPiPDetachOverlay(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [gYTNicoPiPOverlayView removeFromSuperview];
-        gYTNicoPiPOverlayView = nil;
-        gYTNicoPiPOverlayWindow.hidden = YES;
-        gYTNicoPiPOverlayWindow = nil;
-        gYTNicoPiPLaneCursor = 0;
-        [gYTNicoPiPSeenIds removeAllObjects];
-    });
-}
-
 static void YTNicoPiPSetActive(BOOL active, NSString *reason) {
     gYTNicoPiPActive = active;
     [[DebugInspector shared] important:@"PiP comment mode %@ reason=%@", active ? @"ON" : @"OFF", reason ?: @"unknown"];
@@ -144,6 +159,9 @@ static void YTNicoPiPSetActive(BOOL active, NSString *reason) {
 static void YTNicoPiPEmitComment(NSString *author, NSString *text, NSString *messageId) {
     if (!gYTNicoPiPActive || !SettingsManager.shared.enabled || text.length == 0) return;
     if ([author isEqualToString:@"YTNico"]) return;
+    // YouTubeアプリが前面の時はアプリ内Overlay側に任せる。
+    if (YTNicoPiPIsYouTubeForeground()) return;
+
     if (!gYTNicoPiPSeenIds) gYTNicoPiPSeenIds = [NSMutableSet set];
     NSString *key = messageId.length ? messageId : [NSString stringWithFormat:@"%@|%@", author ?: @"", text ?: @""];
     if ([gYTNicoPiPSeenIds containsObject:key]) return;
@@ -221,6 +239,11 @@ static void YTNicoPiPEmitComment(NSString *author, NSString *text, NSString *mes
     dispatch_async(dispatch_get_main_queue(), ^{
         gYTNicoPiPSeenIds = [NSMutableSet set];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+            // アプリに戻ったらPiP用Windowは消して、通常のYouTube内Overlayを優先する。
+            if (YTNicoPiPIsYouTubeForeground()) YTNicoPiPDetachOverlay();
+            else if (gYTNicoPiPActive) YTNicoPiPAttachOverlay();
+        }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
             if (gYTNicoPiPActive) YTNicoPiPAttachOverlay();
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
