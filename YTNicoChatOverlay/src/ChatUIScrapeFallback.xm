@@ -12,6 +12,8 @@ static NSMutableSet<NSString *> *gYTNicoUIScrapeFlushScheduled = nil;
 static CFTimeInterval gYTNicoLastUIScrapePrune = 0;
 static CFTimeInterval gYTNicoLastUIScrapeLog = 0;
 static NSTimer *gYTNicoUIScrapeScanTimer = nil;
+static CGFloat gYTNicoChatSheetHeaderBottomY = 0.0;
+static CFTimeInterval gYTNicoChatSheetHeaderSeenAt = 0.0;
 
 static BOOL YTNicoUIScrapeIsYouTube(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
@@ -67,17 +69,55 @@ static CGRect YTNicoUIScrapeWindowRect(UIView *view) {
     return [view convertRect:view.bounds toView:view.window];
 }
 
+static BOOL YTNicoTextIsChatSheetHeader(NSString *text) {
+    text = YTNicoUIScrapeTrim(text);
+    return [text isEqualToString:@"チャットのリプレイ"] ||
+           [text isEqualToString:@"ライブチャット"] ||
+           [text isEqualToString:@"上位のメッセージ"] ||
+           [text isEqualToString:@"上位チャット"] ||
+           [text isEqualToString:@"すべてのチャット"];
+}
+
+static void YTNicoMaybeUpdateChatSheetHeader(NSString *text, UIView *view) {
+    if (!view.window || !YTNicoTextIsChatSheetHeader(text)) return;
+    CGRect r = YTNicoUIScrapeWindowRect(view);
+    if (CGRectIsEmpty(r)) return;
+    CGRect w = view.window.bounds;
+    if (CGRectGetMidY(r) < w.size.height * 0.22) return;
+    CGFloat bottom = CGRectGetMaxY(r);
+    if (bottom > 0) {
+        gYTNicoChatSheetHeaderBottomY = bottom;
+        gYTNicoChatSheetHeaderSeenAt = CACurrentMediaTime();
+    }
+}
+
+static BOOL YTNicoHasFreshChatSheetMarker(void) {
+    return gYTNicoChatSheetHeaderBottomY > 0.0 && (CACurrentMediaTime() - gYTNicoChatSheetHeaderSeenAt) < 4.0;
+}
+
 static BOOL YTNicoUIScrapeIsInsideChatSheetByGeometry(UIView *view) {
     if (!view.window) return NO;
     CGRect r = YTNicoUIScrapeWindowRect(view);
     CGRect w = view.window.bounds;
     if (CGRectIsEmpty(r) || w.size.height <= 0 || w.size.width <= 0) return NO;
-    BOOL portraitLowerPanel = CGRectGetMidY(r) > w.size.height * 0.34;
-    BOOL landscapeRightPanel = w.size.width > w.size.height && CGRectGetMidX(r) > w.size.width * 0.42;
+
+    BOOL landscape = w.size.width > w.size.height;
     BOOL notTiny = r.size.height >= 4.0 && r.size.width >= 10.0;
     BOOL notFullScreenTitle = r.size.height < w.size.height * 0.78;
     BOOL withinMargins = CGRectGetMinX(r) >= -40.0 && CGRectGetMaxX(r) <= w.size.width + 40.0;
-    return (portraitLowerPanel || landscapeRightPanel) && notTiny && notFullScreenTitle && withinMargins;
+
+    if (!notTiny || !notFullScreenTitle || !withinMargins) return NO;
+
+    if (!landscape && YTNicoHasFreshChatSheetMarker()) {
+        // In portrait, only trust text below the chat sheet header. This prevents
+        // YouTube metadata such as view count / like count above the sheet from being
+        // scraped as comments while keeping short chat comments like "89".
+        return CGRectGetMidY(r) > gYTNicoChatSheetHeaderBottomY + 18.0;
+    }
+
+    BOOL portraitLowerPanel = CGRectGetMidY(r) > w.size.height * 0.46;
+    BOOL landscapeRightPanel = landscape && CGRectGetMidX(r) > w.size.width * 0.42;
+    return portraitLowerPanel || landscapeRightPanel;
 }
 
 static BOOL YTNicoUIScrapeLooksLikeMetadataPath(NSString *path) {
@@ -96,7 +136,7 @@ static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
         @"livechat", @"live_chat", @"ytlivechat", @"ytlive", @"chatreplay", @"livechatreplay",
         @"chatmessage", @"livechatmessage", @"livechatitem", @"replaychat", @"conversationbar", @"livechattext"
     ]);
-    if (strongChatSignal) return YES;
+    if (strongChatSignal) return YTNicoUIScrapeIsInsideChatSheetByGeometry(view);
 
     BOOL genericRow = YTNicoUIScrapeContainsAny(path, @[@"asdisplay", @"collection", @"table", @"cell", @"renderer", @"stack", @"label", @"display"]);
     BOOL plausibleYouTubeTree = YTNicoUIScrapeContainsAny(path, @[@"yt", @"youtube", @"asdisplay", @"uicollection", @"uitable"]);
@@ -117,7 +157,7 @@ static BOOL YTNicoUIScrapeRejectText(NSString *text) {
 
     NSArray *rejectExact = @[
         @"返信", @"共有", @"保存", @"チャンネル登録", @"高評価", @"低評価", @"ライブチャット", @"チャット",
-        @"上位チャット", @"すべてのチャット", @"チャットのリプレイ", @"コメント", @"並べ替え", @"キャンセル", @"送信", @"検索", @"設定"
+        @"上位チャット", @"上位のメッセージ", @"すべてのチャット", @"チャットのリプレイ", @"コメント", @"並べ替え", @"キャンセル", @"送信", @"検索", @"設定"
     ];
     for (NSString *r in rejectExact) if ([text isEqualToString:r]) return YES;
     NSArray *rejectContains = @[
@@ -132,7 +172,7 @@ static BOOL YTNicoUIScrapeLooksLikeMetadataOnly(NSString *text) {
     if (YTNicoIsJapaneseShortReaction(text)) return NO;
     NSRegularExpression *timeOnly = [NSRegularExpression regularExpressionWithPattern:@"^([0-9]{1,2}:)?[0-9]{1,2}:[0-9]{2}$" options:0 error:nil];
     if ([timeOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
-    NSRegularExpression *countOnly = [NSRegularExpression regularExpressionWithPattern:@"^[0-9,.万億]+\\s*(回視聴|人が視聴中|件|日前|時間前|分前)$" options:0 error:nil];
+    NSRegularExpression *countOnly = [NSRegularExpression regularExpressionWithPattern:@"^[0-9,.万億０-９，]+\\s*(回視聴|人が視聴中|件|日前|時間前|分前)$" options:0 error:nil];
     if ([countOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
     return NO;
 }
@@ -179,6 +219,7 @@ static void YTNicoCollectLabelsInView(UIView *view, NSMutableArray<NSDictionary 
         UILabel *label = (UILabel *)view;
         NSString *text = YTNicoUIScrapeTrim(label.text ?: label.attributedText.string ?: @"");
         if (text.length > 0) {
+            YTNicoMaybeUpdateChatSheetHeader(text, label);
             CGRect r = YTNicoUIScrapeWindowRect(label);
             if (!CGRectIsEmpty(r)) [out addObject:@{@"text": text, @"x": @(CGRectGetMinX(r)), @"y": @(CGRectGetMidY(r)), @"w": @(CGRectGetWidth(r)), @"h": @(CGRectGetHeight(r))}];
         }
@@ -295,6 +336,7 @@ static void YTNicoUIScrapeBufferText(NSString *rawText, UIView *sourceView) {
     if (!YTNicoUIScrapeIsYouTube() || !settings.enabled) return;
     if ([settings respondsToSelector:@selector(uiScrapeFallback)] && !settings.uiScrapeFallback) return;
     if (![sourceView isKindOfClass:UIView.class]) return;
+    YTNicoMaybeUpdateChatSheetHeader(rawText, sourceView);
     if (!YTNicoUIScrapeLooksLikeChatHierarchy(sourceView)) return;
 
     NSString *text = YTNicoUIScrapeTrim(rawText);
@@ -350,6 +392,10 @@ static BOOL YTNicoViewLooksLikeChatRowCandidate(UIView *view) {
 
 static void YTNicoScanRowCandidatesInView(UIView *view) {
     if (!view || view.hidden || view.alpha < 0.02) return;
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        YTNicoMaybeUpdateChatSheetHeader(label.text ?: label.attributedText.string ?: @"", label);
+    }
     if (YTNicoViewLooksLikeChatRowCandidate(view)) {
         NSMutableArray<NSDictionary *> *labels = [NSMutableArray array];
         YTNicoCollectLabelsInView(view, labels);
@@ -358,7 +404,7 @@ static void YTNicoScanRowCandidatesInView(UIView *view) {
             CGRect r = YTNicoUIScrapeWindowRect(view);
             NSString *key = [NSString stringWithFormat:@"cell-%p-%ld", (__bridge void *)view, (long)round(CGRectGetMidY(r) / 10.0)];
             YTNicoUIScrapeEmitBody(body, key);
-            return; // avoid also scanning children of the same row candidate
+            return;
         }
     }
     for (UIView *sub in view.subviews) YTNicoScanRowCandidatesInView(sub);
@@ -407,6 +453,6 @@ static void YTNicoUIScrapePeriodicScan(void) {
             gYTNicoUIScrapeScanTimer = [NSTimer scheduledTimerWithTimeInterval:0.55 repeats:YES block:^(__unused NSTimer *timer) { YTNicoUIScrapePeriodicScan(); }];
             [[NSRunLoop mainRunLoop] addTimer:gYTNicoUIScrapeScanTimer forMode:NSRunLoopCommonModes];
         }
-        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"UI chat scrape fallback loaded cell-scan mode"];
+        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"UI chat scrape fallback loaded header-bounded cell-scan mode"];
     });
 }
