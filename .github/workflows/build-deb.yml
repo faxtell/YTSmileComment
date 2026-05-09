@@ -1,0 +1,141 @@
+name: Build YTNicoChatOverlay deb
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_release:
+        description: "Upload .deb directly to a GitHub Release"
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: "Release tag name. Empty = auto ytnico-deb-${run_number}"
+        required: false
+        type: string
+        default: ""
+  push:
+    paths:
+      - "YTNicoChatOverlay/**"
+      - ".github/workflows/build-deb.yml"
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build deb on macOS
+    runs-on: macos-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Show runner and Xcode info
+        run: |
+          sw_vers
+          ls -1 /Applications | grep -E '^Xcode' || true
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install ldid dpkg xz
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Theos
+        run: |
+          rm -rf "$HOME/theos"
+          git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+          cd "$HOME/theos"
+          git submodule update --init --recursive
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
+          echo "[INFO] THEOS=$HOME/theos"
+
+      - name: Build deb package
+        env:
+          THEOS: /Users/runner/theos
+        run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$THEOS/bin:$THEOS/vendor/dm.pl:$PATH"
+          PACKAGER="$(command -v dpkg-deb)"
+          echo "[INFO] THEOS=$THEOS"
+          echo "[INFO] deb packager=$PACKAGER"
+          cd YTNicoChatOverlay
+          make clean \
+            _THEOS_PLATFORM_DPKG_DEB="$PACKAGER" \
+            _THEOS_PLATFORM_DPKG_DEB_COMPRESSION=xz \
+            THEOS_PLATFORM_DEB_COMPRESSION_TYPE=xz
+          make package FINALPACKAGE=1 \
+            _THEOS_PLATFORM_DPKG_DEB="$PACKAGER" \
+            _THEOS_PLATFORM_DPKG_DEB_COMPRESSION=xz \
+            THEOS_PLATFORM_DEB_COMPRESSION_TYPE=xz
+          echo "Generated packages:"
+          find packages .theos/packages -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \; 2>/dev/null || true
+
+      - name: Collect deb files
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          latest="$(find YTNicoChatOverlay/packages YTNicoChatOverlay/.theos/packages -maxdepth 1 -type f -name "*.deb" -print 2>/dev/null | xargs ls -t 2>/dev/null | head -n 1 || true)"
+          if [ -z "$latest" ]; then
+            echo "No .deb files found" >&2
+            exit 1
+          fi
+          cp -f "$latest" dist/YTNicoChatOverlay.deb
+          echo "Selected artifact source: $latest"
+          echo "Single direct artifact: dist/YTNicoChatOverlay.deb"
+          ls -lh dist/YTNicoChatOverlay.deb
+          {
+            echo "## Generated .deb"
+            echo "- dist/YTNicoChatOverlay.deb"
+            echo "- source: $latest"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/YTNicoChatOverlay.deb
+          archive: false
+          if-no-files-found: error
+
+      - name: Decide release tag
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_release
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if [ -z "$tag" ]; then
+            tag="ytnico-deb-${{ github.run_number }}"
+          fi
+          echo "YTNICO_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "Release tag: $tag"
+
+      - name: Upload deb directly to GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$YTNICO_RELEASE_TAG"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists: $tag"
+          else
+            gh release create "$tag" --title "YTNicoChatOverlay deb $tag" --notes "Automated .deb build from GitHub Actions run $GITHUB_RUN_NUMBER."
+          fi
+          gh release upload "$tag" dist/YTNicoChatOverlay.deb --clobber
+          {
+            echo "## Direct .deb Release"
+            echo "Uploaded .deb directly to release: $tag"
+          } >> "$GITHUB_STEP_SUMMARY"
