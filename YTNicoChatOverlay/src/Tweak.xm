@@ -8,6 +8,9 @@
 #import "YTNicoSettingsViewController.h"
 
 extern "C" NSUInteger YTNicoManualScanVisibleChatPanel(void);
+extern "C" void YTNicoStartManualChatPanelWatch(NSString *videoId);
+extern "C" void YTNicoStopManualChatPanelWatch(void);
+extern "C" BOOL YTNicoManualChatPanelWatchIsActive(void);
 
 @interface YouTubeChatAdapter (YTNicoManualFetch)
 + (void)ytnico_fetchCommentsForVideoIdIgnoringThrottle:(NSString *)videoId;
@@ -37,12 +40,16 @@ static const void *kToastKey = &kToastKey;
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    YTNicoStopManualChatPanelWatch();
     YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
     [adapter stopObserving];
 }
 
 - (void)reloadSettings {
-    if (![SettingsManager shared].enabled) [self clearOverlayForVideoChange];
+    if (![SettingsManager shared].enabled) {
+        YTNicoStopManualChatPanelWatch();
+        [self clearOverlayForVideoChange];
+    }
     [self updateToggleButtonAppearance];
     YouTubeChatAdapter *adapter = objc_getAssociatedObject(self, kAdapterKey);
     [adapter stopObserving];
@@ -137,6 +144,7 @@ static const void *kToastKey = &kToastKey;
 }
 
 - (void)clearOverlayForVideoChange {
+    YTNicoStopManualChatPanelWatch();
     NicoChatOverlayView *overlay = objc_getAssociatedObject(self, kOverlayKey);
     [overlay clearComments];
     [self clearAllOverlaysInView:self.window];
@@ -408,14 +416,16 @@ static const void *kToastKey = &kToastKey;
     }
 
     NSUInteger scanned = YTNicoManualScanVisibleChatPanel();
+    NSString *videoId = [self bestManualVideoId];
+    YTNicoStartManualChatPanelWatch(videoId.length == 11 ? videoId : nil);
     if (scanned > 0) {
-        [self showSystemToast:[NSString stringWithFormat:@"表示中のチャットを読み取りました: %lu件", (unsigned long)scanned]];
-        [[DebugInspector shared] important:@"manual UI scan emitted=%lu", (unsigned long)scanned];
+        [self showSystemToast:[NSString stringWithFormat:@"チャット追跡を開始しました: %lu件", (unsigned long)scanned]];
+        [[DebugInspector shared] important:@"manual UI watch started emitted=%lu videoId=%@", (unsigned long)scanned, videoId ?: @""];
         return;
     }
 
-    [self showSystemToast:@"チャット欄を開いてから💬を押してください"];
-    [[DebugInspector shared] important:@"manual UI scan emitted=0"];
+    [self showSystemToast:@"チャット追跡を開始しました。チャット欄を開いたまま再生してください"];
+    [[DebugInspector shared] important:@"manual UI watch started emitted=0 videoId=%@", videoId ?: @""];
 }
 
 - (void)handleSettingsLongPress:(UILongPressGestureRecognizer *)gesture {
