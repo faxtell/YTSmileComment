@@ -18,6 +18,8 @@ static BOOL YTNicoManualIsYouTube(void) {
 static NSString *YTNicoManualTrim(NSString *s) {
     if (![s isKindOfClass:NSString.class]) return @"";
     s = [s stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    s = [s stringByReplacingOccurrencesOfString:@"、 " withString:@" "];
+    s = [s stringByReplacingOccurrencesOfString:@", " withString:@" "];
     s = [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     while ([s rangeOfString:@"  "].location != NSNotFound) s = [s stringByReplacingOccurrencesOfString:@"  " withString:@" "];
     while ([s rangeOfString:@"\n\n"].location != NSNotFound) s = [s stringByReplacingOccurrencesOfString:@"\n\n" withString:@"\n"];
@@ -37,11 +39,11 @@ static BOOL YTNicoManualContainsAny(NSString *s, NSArray<NSString *> *needles) {
 
 static BOOL YTNicoManualIsHeaderText(NSString *text) {
     text = YTNicoManualTrim(text);
-    return [text isEqualToString:@"チャットのリプレイ"] ||
-           [text isEqualToString:@"ライブチャット"] ||
-           [text isEqualToString:@"上位のメッセージ"] ||
-           [text isEqualToString:@"上位チャット"] ||
-           [text isEqualToString:@"すべてのチャット"];
+    return [text rangeOfString:@"チャットのリプレイ"].location != NSNotFound ||
+           [text rangeOfString:@"ライブチャット"].location != NSNotFound ||
+           [text rangeOfString:@"上位のメッセージ"].location != NSNotFound ||
+           [text rangeOfString:@"上位チャット"].location != NSNotFound ||
+           [text rangeOfString:@"すべてのチャット"].location != NSNotFound;
 }
 
 static BOOL YTNicoManualIsShortReaction(NSString *text) {
@@ -57,9 +59,9 @@ static BOOL YTNicoManualLooksLikeMetadata(NSString *text) {
     if (YTNicoManualIsShortReaction(text)) return NO;
     if ([text rangeOfString:@"回視聴"].location != NSNotFound) return YES;
     if ([text rangeOfString:@"人が視聴中"].location != NSNotFound) return YES;
-    NSArray *exact = @[@"返信", @"共有", @"保存", @"チャンネル登録", @"高評価", @"低評価", @"ライブチャット", @"チャット", @"チャットのリプレイ", @"上位のメッセージ", @"上位チャット", @"すべてのチャット", @"コメント", @"並べ替え", @"キャンセル", @"送信", @"検索", @"設定"];
+    NSArray *exact = @[@"返信", @"共有", @"保存", @"チャンネル登録", @"高評価", @"低評価", @"ライブチャット", @"チャット", @"チャットのリプレイ", @"上位のメッセージ", @"上位チャット", @"すべてのチャット", @"コメント", @"並べ替え", @"キャンセル", @"送信", @"検索", @"設定", @"閉じる", @"フィルタ", @"その他"];
     for (NSString *x in exact) if ([text isEqualToString:x]) return YES;
-    NSArray *contains = @[@"http://", @"https://", @"利用規約", @"プライバシー", @"広告", @"Google", @"YouTube Premium"];
+    NSArray *contains = @[@"http://", @"https://", @"利用規約", @"プライバシー", @"広告", @"Google", @"YouTube Premium", @"チャット欄を開いてから"];
     if (YTNicoManualContainsAny(text, contains)) return YES;
     NSRegularExpression *timeOnly = [NSRegularExpression regularExpressionWithPattern:@"^([0-9]{1,2}:)?[0-9]{1,2}:[0-9]{2}$" options:0 error:nil];
     if ([timeOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
@@ -79,27 +81,39 @@ static BOOL YTNicoManualLooksLikeHandle(NSString *text) {
 static NSString *YTNicoManualStripSeparatedHandle(NSString *text) {
     text = YTNicoManualTrim(text);
     if (![text hasPrefix:@"@"] && ![text hasPrefix:@"＠"]) return text;
-    NSRegularExpression *withSep = [NSRegularExpression regularExpressionWithPattern:@"^[＠@][^\\s　:：]+[\\s　:：-－—–|｜・]+(.+)$" options:0 error:nil];
+    NSRegularExpression *withSep = [NSRegularExpression regularExpressionWithPattern:@"^[＠@][^\\s　:：,，、]+[\\s　:：,，、-－—–|｜・]+(.+)$" options:0 error:nil];
     NSTextCheckingResult *m = [withSep firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
     if (m && m.numberOfRanges >= 2) return YTNicoManualTrim([text substringWithRange:[m rangeAtIndex:1]]);
     return text;
 }
 
+static void YTNicoManualAddTextItem(NSMutableArray<NSDictionary *> *out, NSString *rawText, UIView *sourceView, BOOL includeHeader) {
+    NSString *text = YTNicoManualTrim(rawText);
+    if (text.length == 0 || !sourceView.window) return;
+    if (!includeHeader && YTNicoManualIsHeaderText(text)) return;
+    CGRect r = YTNicoManualWindowRect(sourceView);
+    if (CGRectIsEmpty(r)) return;
+    [out addObject:@{@"text": text, @"x": @(CGRectGetMinX(r)), @"y": @(CGRectGetMidY(r)), @"h": @(CGRectGetHeight(r)), @"w": @(CGRectGetWidth(r))}];
+}
+
 static void YTNicoManualCollectLabels(UIView *view, NSMutableArray<NSDictionary *> *out, BOOL includeHeader) {
     if (!view || view.hidden || view.alpha < 0.02 || !view.window) return;
-    if (out.count > 220) return;
+    if (out.count > 320) return;
+
     if ([view isKindOfClass:UILabel.class]) {
         UILabel *label = (UILabel *)view;
-        NSString *text = YTNicoManualTrim(label.text ?: label.attributedText.string ?: @"");
-        if (text.length > 0) {
-            CGRect r = YTNicoManualWindowRect(label);
-            if (!CGRectIsEmpty(r)) {
-                if (includeHeader || !YTNicoManualIsHeaderText(text)) {
-                    [out addObject:@{@"text": text, @"x": @(CGRectGetMinX(r)), @"y": @(CGRectGetMidY(r)), @"h": @(CGRectGetHeight(r)), @"w": @(CGRectGetWidth(r))}];
-                }
-            }
-        }
+        YTNicoManualAddTextItem(out, label.text ?: label.attributedText.string ?: @"", label, includeHeader);
+    } else if ([view isKindOfClass:UIButton.class]) {
+        UIButton *button = (UIButton *)view;
+        YTNicoManualAddTextItem(out, button.currentTitle ?: button.titleLabel.text ?: button.currentAttributedTitle.string ?: @"", button, includeHeader);
     }
+
+    // YouTube often renders chat replay rows with AsyncDisplayKit views. In that case
+    // the visible text is not a UILabel, but the row/accessibility container still has
+    // accessibilityLabel. Read it only on manual scan so it does not interfere with taps.
+    NSString *ax = YTNicoManualTrim(view.accessibilityLabel ?: @"");
+    if (ax.length > 0) YTNicoManualAddTextItem(out, ax, view, includeHeader);
+
     for (UIView *sub in view.subviews) YTNicoManualCollectLabels(sub, out, includeHeader);
 }
 
@@ -113,7 +127,7 @@ static CGFloat YTNicoManualFindChatHeader(UIWindow *win) {
         if (!YTNicoManualIsHeaderText(text)) continue;
         CGFloat y = [item[@"y"] doubleValue];
         CGFloat h = [item[@"h"] doubleValue];
-        if (y < wb.size.height * 0.22) continue;
+        if (y < wb.size.height * 0.20) continue;
         best = MAX(best, y + h / 2.0);
     }
     if (best > 0) {
@@ -143,7 +157,7 @@ static NSString *YTNicoManualBodyFromItems(NSArray<NSDictionary *> *items) {
         if (YTNicoManualLooksLikeMetadata(t)) continue;
         if (YTNicoManualLooksLikeHandle(t) && sorted.count > 1) continue;
         NSString *body = YTNicoManualStripSeparatedHandle(t);
-        if (body.length > 0) [parts addObject:body];
+        if (body.length > 0 && !YTNicoManualLooksLikeMetadata(body)) [parts addObject:body];
     }
     return YTNicoManualTrim([parts componentsJoinedByString:@" "]);
 }
@@ -166,7 +180,7 @@ static void YTNicoManualEmit(NSString *body, NSString *key) {
 }
 
 static void YTNicoManualScanWindow(UIWindow *win) {
-    if (!win || win.hidden || win.alpha < 0.02 || win.windowLevel != UIWindowLevelNormal) return;
+    if (!win || win.hidden || win.alpha < 0.02) return;
     CGFloat headerBottom = YTNicoManualFindChatHeader(win);
     if (headerBottom <= 0 && gYTNicoManualHeaderBottomY > 0 && CACurrentMediaTime() - gYTNicoManualHeaderSeenAt < 30.0) headerBottom = gYTNicoManualHeaderBottomY;
     if (headerBottom <= 0) return;
@@ -228,6 +242,6 @@ extern "C" NSUInteger YTNicoManualScanVisibleChatPanel(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!YTNicoManualIsYouTube()) return;
         gYTNicoManualSeen = [NSMutableDictionary dictionary];
-        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"manual chat panel scanner loaded"];
+        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"manual chat panel scanner loaded accessibility mode"];
     });
 }
