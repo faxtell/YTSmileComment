@@ -9,6 +9,7 @@ static NSMutableDictionary<NSString *, NSNumber *> *gYTNicoDelayedSeen = nil;
 static CFTimeInterval gYTNicoDelayedLastLog = 0;
 static CGFloat gYTNicoDelayedHeaderBottomY = 0;
 static CFTimeInterval gYTNicoDelayedHeaderSeenAt = 0;
+static BOOL gYTNicoDelayedScanRunning = NO;
 
 static BOOL YTNicoDelayedIsYouTube(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
@@ -84,8 +85,31 @@ static NSString *YTNicoDelayedStripSeparatedHandle(NSString *text) {
     return text;
 }
 
+static BOOL YTNicoDelayedAnyScrollViewInteracting(UIView *view) {
+    if (!view || view.hidden || view.alpha < 0.02) return NO;
+    if ([view isKindOfClass:UIScrollView.class]) {
+        UIScrollView *scroll = (UIScrollView *)view;
+        if (scroll.dragging || scroll.decelerating || scroll.tracking) return YES;
+    }
+    for (UIView *sub in view.subviews) {
+        if (YTNicoDelayedAnyScrollViewInteracting(sub)) return YES;
+    }
+    return NO;
+}
+
+static BOOL YTNicoDelayedShouldYieldToUserInput(void) {
+    NSString *mode = NSRunLoop.currentRunLoop.currentMode ?: @"";
+    if ([mode isEqualToString:UITrackingRunLoopMode]) return YES;
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return YES;
+    for (UIWindow *win in UIApplication.sharedApplication.windows) {
+        if (!win.hidden && win.alpha > 0.02 && YTNicoDelayedAnyScrollViewInteracting(win)) return YES;
+    }
+    return NO;
+}
+
 static void YTNicoDelayedCollectLabels(UIView *view, NSMutableArray<NSDictionary *> *out, BOOL includeHeader) {
     if (!view || view.hidden || view.alpha < 0.02 || !view.window) return;
+    if (out.count > 180) return;
     if ([view isKindOfClass:UILabel.class]) {
         UILabel *label = (UILabel *)view;
         NSString *text = YTNicoDelayedTrim(label.text ?: label.attributedText.string ?: @"");
@@ -166,7 +190,7 @@ static void YTNicoDelayedEmit(NSString *body, NSString *key) {
 }
 
 static void YTNicoDelayedScanWindow(UIWindow *win) {
-    if (!win || win.hidden || win.alpha < 0.02) return;
+    if (!win || win.hidden || win.alpha < 0.02 || win.windowLevel != UIWindowLevelNormal) return;
     CGFloat headerBottom = YTNicoDelayedFindChatHeader(win);
     if (headerBottom <= 0 && gYTNicoDelayedHeaderBottomY > 0 && CACurrentMediaTime() - gYTNicoDelayedHeaderSeenAt < 20.0) headerBottom = gYTNicoDelayedHeaderBottomY;
     if (headerBottom <= 0) return;
@@ -201,11 +225,18 @@ static void YTNicoDelayedScanWindow(UIWindow *win) {
 }
 
 static void YTNicoDelayedPeriodicScan(void) {
+    if (gYTNicoDelayedScanRunning) return;
     if (!YTNicoDelayedIsYouTube()) return;
     SettingsManager *settings = SettingsManager.shared;
     if (!settings.enabled) return;
     if ([settings respondsToSelector:@selector(uiScrapeFallback)] && !settings.uiScrapeFallback) return;
-    for (UIWindow *win in UIApplication.sharedApplication.windows) YTNicoDelayedScanWindow(win);
+    if (YTNicoDelayedShouldYieldToUserInput()) return;
+    gYTNicoDelayedScanRunning = YES;
+    @try {
+        for (UIWindow *win in UIApplication.sharedApplication.windows) YTNicoDelayedScanWindow(win);
+    } @finally {
+        gYTNicoDelayedScanRunning = NO;
+    }
 }
 
 %ctor {
@@ -213,11 +244,11 @@ static void YTNicoDelayedPeriodicScan(void) {
         if (!YTNicoDelayedIsYouTube()) return;
         gYTNicoDelayedSeen = [NSMutableDictionary dictionary];
         if (!gYTNicoDelayedChatScanTimer) {
-            gYTNicoDelayedChatScanTimer = [NSTimer scheduledTimerWithTimeInterval:0.35 repeats:YES block:^(__unused NSTimer *timer) {
+            gYTNicoDelayedChatScanTimer = [NSTimer scheduledTimerWithTimeInterval:1.05 repeats:YES block:^(__unused NSTimer *timer) {
                 YTNicoDelayedPeriodicScan();
             }];
-            [[NSRunLoop mainRunLoop] addTimer:gYTNicoDelayedChatScanTimer forMode:NSRunLoopCommonModes];
+            [[NSRunLoop mainRunLoop] addTimer:gYTNicoDelayedChatScanTimer forMode:NSDefaultRunLoopMode];
         }
-        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"delayed chat panel scanner loaded"];
+        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"delayed chat panel scanner loaded safe input mode"];
     });
 }
