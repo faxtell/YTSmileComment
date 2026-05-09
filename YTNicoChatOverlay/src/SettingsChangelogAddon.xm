@@ -1,7 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-static NSString * const kYTNicoNightlyVersion = @"Nightly 0.9.2 (2026.05.09)";
 static const void *kYTNicoChangelogButtonKey = &kYTNicoChangelogButtonKey;
 static const void *kYTNicoChangelogCardKey = &kYTNicoChangelogCardKey;
 
@@ -44,9 +43,7 @@ static void YTNicoCLAddVersion(UIStackView *stack, NSString *version, NSString *
     NSString *title = badge.length ? [NSString stringWithFormat:@"%@  %@", version, badge] : version;
     [box addArrangedSubview:YTNicoCLLabel(title, 17.0, UIFontWeightBold, nil)];
     [box addArrangedSubview:YTNicoCLLabel(date, 12.0, UIFontWeightSemibold, UIColor.secondaryLabelColor)];
-    for (NSString *item in items) {
-        [box addArrangedSubview:YTNicoCLLabel([NSString stringWithFormat:@"・%@", item], 13.0, UIFontWeightRegular, UIColor.secondaryLabelColor)];
-    }
+    for (NSString *item in items) [box addArrangedSubview:YTNicoCLLabel([NSString stringWithFormat:@"・%@", item], 13.0, UIFontWeightRegular, UIColor.secondaryLabelColor)];
     [stack addArrangedSubview:card];
 }
 
@@ -151,9 +148,9 @@ static UIButton *YTNicoCLButton(NSString *title, NSString *subtitle, id target, 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     @try {
-        UIStackView *stack = nil;
-        if ([self respondsToSelector:@selector(stack)]) stack = ((UIStackView *(*)(id, SEL))objc_msgSend)(self, @selector(stack));
-        if (!stack || objc_getAssociatedObject(self, kYTNicoChangelogCardKey)) return;
+        id obj = (id)self;
+        UIStackView *stack = [obj valueForKey:@"stack"];
+        if (![stack isKindOfClass:UIStackView.class] || objc_getAssociatedObject(obj, kYTNicoChangelogCardKey)) return;
 
         UIView *card = YTNicoCLCard();
         UIStackView *box = [UIStackView new];
@@ -171,19 +168,20 @@ static UIButton *YTNicoCLButton(NSString *title, NSString *subtitle, id target, 
         ]];
         [box addArrangedSubview:YTNicoCLLabel(@"📝 最新の更新", 15.5, UIFontWeightBold, nil)];
         [box addArrangedSubview:YTNicoCLLabel(@"Nightly 0.9.2：💬を押すとチャット欄を継続追跡。動画を変えるまで表示中コメントを拾い続けます。", 12.5, UIFontWeightRegular, UIColor.secondaryLabelColor)];
-        UIButton *button = YTNicoCLButton(@"📝 更新履歴を見る", @"これまでの変更とNightlyバージョン", self, @selector(ytnico_openChangelog));
+        UIButton *button = YTNicoCLButton(@"📝 更新履歴を見る", @"これまでの変更とNightlyバージョン", obj, @selector(ytnico_openChangelog));
         [box addArrangedSubview:button];
-        objc_setAssociatedObject(self, kYTNicoChangelogButtonKey, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(obj, kYTNicoChangelogButtonKey, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
         NSUInteger index = stack.arrangedSubviews.count > 0 ? stack.arrangedSubviews.count - 1 : stack.arrangedSubviews.count;
         [stack insertArrangedSubview:card atIndex:index];
-        objc_setAssociatedObject(self, kYTNicoChangelogCardKey, card, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(obj, kYTNicoChangelogCardKey, card, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } @catch (__unused NSException *e) {}
 }
 
 %new
 - (void)ytnico_openChangelog {
     YTNicoChangelogViewController *vc = [YTNicoChangelogViewController new];
-    [self.navigationController pushViewController:vc animated:YES];
+    UIViewController *controller = (UIViewController *)self;
+    [controller.navigationController pushViewController:vc animated:YES];
 }
 %end
