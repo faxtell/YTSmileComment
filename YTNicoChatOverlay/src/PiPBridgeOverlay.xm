@@ -23,6 +23,10 @@ static BOOL YTNicoIsSpringBoardProcess(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"];
 }
 
+static BOOL YTNicoYouTubeIsForeground(void) {
+    return YTNicoIsYouTubeProcess() && UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+}
+
 static NSUserDefaults *YTNicoPiPBridgeDefaults(void) {
     return [[NSUserDefaults alloc] initWithSuiteName:kYTNicoPiPBridgeDomain] ?: NSUserDefaults.standardUserDefaults;
 }
@@ -33,6 +37,9 @@ static void YTNicoPiPBridgePostNotification(void) {
 
 static void YTNicoPiPBridgeSetActive(BOOL active) {
     if (!YTNicoIsYouTubeProcess()) return;
+    // YouTubeアプリが前面の間はPiPブリッジを有効化しない。
+    // コメントは通常のYouTube内Overlayに出す。
+    if (active && YTNicoYouTubeIsForeground()) active = NO;
     gYTNicoYTPiPBridgeActive = active;
     NSUserDefaults *d = YTNicoPiPBridgeDefaults();
     [d setBool:active forKey:kYTNicoPiPBridgeActiveKey];
@@ -43,6 +50,8 @@ static void YTNicoPiPBridgeSetActive(BOOL active) {
 
 static void YTNicoPiPBridgePublishComment(NSString *author, NSString *text, NSString *messageId) {
     if (!YTNicoIsYouTubeProcess()) return;
+    // YouTubeが前面ならPiP側には送らない。アプリ内Overlayを優先。
+    if (YTNicoYouTubeIsForeground()) return;
     if (!gYTNicoYTPiPBridgeActive && ![YTNicoPiPBridgeDefaults() boolForKey:kYTNicoPiPBridgeActiveKey]) return;
     if (!text.length) return;
     if ([author isEqualToString:@"YTNico"]) return;
@@ -228,7 +237,14 @@ static void YTNicoSBBridgeCallback(CFNotificationCenterRef center, void *observe
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (YTNicoIsYouTubeProcess()) {
-            gYTNicoYTPiPBridgeActive = [YTNicoPiPBridgeDefaults() boolForKey:kYTNicoPiPBridgeActiveKey];
+            if (YTNicoYouTubeIsForeground()) {
+                YTNicoPiPBridgeSetActive(NO);
+            } else {
+                gYTNicoYTPiPBridgeActive = [YTNicoPiPBridgeDefaults() boolForKey:kYTNicoPiPBridgeActiveKey];
+            }
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+                YTNicoPiPBridgeSetActive(NO);
+            }];
             return;
         }
         if (YTNicoIsSpringBoardProcess()) {
