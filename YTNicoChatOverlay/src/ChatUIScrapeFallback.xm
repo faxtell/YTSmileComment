@@ -14,6 +14,7 @@ static CFTimeInterval gYTNicoLastUIScrapeLog = 0;
 static NSTimer *gYTNicoUIScrapeScanTimer = nil;
 static CGFloat gYTNicoChatSheetHeaderBottomY = 0.0;
 static CFTimeInterval gYTNicoChatSheetHeaderSeenAt = 0.0;
+static BOOL gYTNicoUIScrapeScanRunning = NO;
 
 static BOOL YTNicoUIScrapeIsYouTube(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"];
@@ -69,6 +70,26 @@ static CGRect YTNicoUIScrapeWindowRect(UIView *view) {
     return [view convertRect:view.bounds toView:view.window];
 }
 
+static BOOL YTNicoUIScrapeAnyScrollViewInteracting(UIView *view) {
+    if (!view || view.hidden || view.alpha < 0.02) return NO;
+    if ([view isKindOfClass:UIScrollView.class]) {
+        UIScrollView *scroll = (UIScrollView *)view;
+        if (scroll.dragging || scroll.decelerating || scroll.tracking) return YES;
+    }
+    for (UIView *sub in view.subviews) if (YTNicoUIScrapeAnyScrollViewInteracting(sub)) return YES;
+    return NO;
+}
+
+static BOOL YTNicoUIScrapeShouldYieldToUserInput(void) {
+    NSString *mode = NSRunLoop.currentRunLoop.currentMode ?: @"";
+    if ([mode isEqualToString:UITrackingRunLoopMode]) return YES;
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return YES;
+    for (UIWindow *win in UIApplication.sharedApplication.windows) {
+        if (!win.hidden && win.alpha > 0.02 && YTNicoUIScrapeAnyScrollViewInteracting(win)) return YES;
+    }
+    return NO;
+}
+
 static BOOL YTNicoTextIsChatSheetHeader(NSString *text) {
     text = YTNicoUIScrapeTrim(text);
     return [text isEqualToString:@"チャットのリプレイ"] ||
@@ -92,7 +113,7 @@ static void YTNicoMaybeUpdateChatSheetHeader(NSString *text, UIView *view) {
 }
 
 static BOOL YTNicoHasFreshChatSheetMarker(void) {
-    return gYTNicoChatSheetHeaderBottomY > 0.0 && (CACurrentMediaTime() - gYTNicoChatSheetHeaderSeenAt) < 4.0;
+    return gYTNicoChatSheetHeaderBottomY > 0.0 && (CACurrentMediaTime() - gYTNicoChatSheetHeaderSeenAt) < 18.0;
 }
 
 static BOOL YTNicoUIScrapeIsInsideChatSheetByGeometry(UIView *view) {
@@ -108,14 +129,9 @@ static BOOL YTNicoUIScrapeIsInsideChatSheetByGeometry(UIView *view) {
 
     if (!notTiny || !notFullScreenTitle || !withinMargins) return NO;
 
-    if (!landscape && YTNicoHasFreshChatSheetMarker()) {
-        // In portrait, only trust text below the chat sheet header. This prevents
-        // YouTube metadata such as view count / like count above the sheet from being
-        // scraped as comments while keeping short chat comments like "89".
-        return CGRectGetMidY(r) > gYTNicoChatSheetHeaderBottomY + 18.0;
-    }
+    if (!landscape && YTNicoHasFreshChatSheetMarker()) return CGRectGetMidY(r) > gYTNicoChatSheetHeaderBottomY + 18.0;
 
-    BOOL portraitLowerPanel = CGRectGetMidY(r) > w.size.height * 0.46;
+    BOOL portraitLowerPanel = CGRectGetMidY(r) > w.size.height * 0.52;
     BOOL landscapeRightPanel = landscape && CGRectGetMidX(r) > w.size.width * 0.42;
     return portraitLowerPanel || landscapeRightPanel;
 }
@@ -131,13 +147,8 @@ static BOOL YTNicoUIScrapeLooksLikeMetadataPath(NSString *path) {
 static BOOL YTNicoUIScrapeLooksLikeChatHierarchy(UIView *view) {
     NSString *path = YTNicoUIScrapeClassPath(view, 18);
     if (YTNicoUIScrapeLooksLikeMetadataPath(path)) return NO;
-
-    BOOL strongChatSignal = YTNicoUIScrapeContainsAny(path, @[
-        @"livechat", @"live_chat", @"ytlivechat", @"ytlive", @"chatreplay", @"livechatreplay",
-        @"chatmessage", @"livechatmessage", @"livechatitem", @"replaychat", @"conversationbar", @"livechattext"
-    ]);
+    BOOL strongChatSignal = YTNicoUIScrapeContainsAny(path, @[@"livechat", @"live_chat", @"ytlivechat", @"ytlive", @"chatreplay", @"livechatreplay", @"chatmessage", @"livechatmessage", @"livechatitem", @"replaychat", @"conversationbar", @"livechattext"]);
     if (strongChatSignal) return YTNicoUIScrapeIsInsideChatSheetByGeometry(view);
-
     BOOL genericRow = YTNicoUIScrapeContainsAny(path, @[@"asdisplay", @"collection", @"table", @"cell", @"renderer", @"stack", @"label", @"display"]);
     BOOL plausibleYouTubeTree = YTNicoUIScrapeContainsAny(path, @[@"yt", @"youtube", @"asdisplay", @"uicollection", @"uitable"]);
     return genericRow && plausibleYouTubeTree && YTNicoUIScrapeIsInsideChatSheetByGeometry(view);
@@ -154,15 +165,9 @@ static BOOL YTNicoUIScrapeRejectText(NSString *text) {
     text = YTNicoUIScrapeTrim(text);
     if (text.length < 1 || text.length > 520) return YES;
     if (YTNicoIsJapaneseShortReaction(text)) return NO;
-
-    NSArray *rejectExact = @[
-        @"返信", @"共有", @"保存", @"チャンネル登録", @"高評価", @"低評価", @"ライブチャット", @"チャット",
-        @"上位チャット", @"上位のメッセージ", @"すべてのチャット", @"チャットのリプレイ", @"コメント", @"並べ替え", @"キャンセル", @"送信", @"検索", @"設定"
-    ];
+    NSArray *rejectExact = @[@"返信", @"共有", @"保存", @"チャンネル登録", @"高評価", @"低評価", @"ライブチャット", @"チャット", @"上位チャット", @"上位のメッセージ", @"すべてのチャット", @"チャットのリプレイ", @"コメント", @"並べ替え", @"キャンセル", @"送信", @"検索", @"設定"];
     for (NSString *r in rejectExact) if ([text isEqualToString:r]) return YES;
-    NSArray *rejectContains = @[
-        @"http://", @"https://", @"利用規約", @"プライバシー", @"広告", @"メンバーになる", @"チャンネルを作成", @"ログイン", @"Google", @"YouTube Premium"
-    ];
+    NSArray *rejectContains = @[@"http://", @"https://", @"利用規約", @"プライバシー", @"広告", @"メンバーになる", @"チャンネルを作成", @"ログイン", @"Google", @"YouTube Premium"];
     return YTNicoUIScrapeContainsAny(text, rejectContains);
 }
 
@@ -173,8 +178,7 @@ static BOOL YTNicoUIScrapeLooksLikeMetadataOnly(NSString *text) {
     NSRegularExpression *timeOnly = [NSRegularExpression regularExpressionWithPattern:@"^([0-9]{1,2}:)?[0-9]{1,2}:[0-9]{2}$" options:0 error:nil];
     if ([timeOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
     NSRegularExpression *countOnly = [NSRegularExpression regularExpressionWithPattern:@"^[0-9,.万億０-９，]+\\s*(回視聴|人が視聴中|件|日前|時間前|分前)$" options:0 error:nil];
-    if ([countOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)]) return YES;
-    return NO;
+    return [countOnly firstMatchInString:text options:0 range:NSMakeRange(0, text.length)] != nil;
 }
 
 static BOOL YTNicoUIScrapeFragmentLooksLikeHandle(NSString *text) {
@@ -205,16 +209,14 @@ static NSString *YTNicoBodyFromSingleText(NSString *rawText) {
         [lines addObject:line];
     }
     if (lines.count == 0) return @"";
-    if (lines.count >= 2 && YTNicoUIScrapeFragmentLooksLikeHandle(lines[0])) {
-        return YTNicoUIScrapeTrim([[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@" "]);
-    }
+    if (lines.count >= 2 && YTNicoUIScrapeFragmentLooksLikeHandle(lines[0])) return YTNicoUIScrapeTrim([[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@" "]);
     NSString *joined = YTNicoUIScrapeTrim([lines componentsJoinedByString:@" "]);
     NSString *stripped = YTNicoStripSeparatedHandle(joined);
     return stripped.length ? stripped : joined;
 }
 
 static void YTNicoCollectLabelsInView(UIView *view, NSMutableArray<NSDictionary *> *out) {
-    if (!view || view.hidden || view.alpha < 0.02) return;
+    if (!view || view.hidden || view.alpha < 0.02 || out.count > 180) return;
     if ([view isKindOfClass:UILabel.class]) {
         UILabel *label = (UILabel *)view;
         NSString *text = YTNicoUIScrapeTrim(label.text ?: label.attributedText.string ?: @"");
@@ -263,7 +265,6 @@ static NSString *YTNicoBodyFromLabelItems(NSArray<NSDictionary *> *items) {
         if (ax > bx) return NSOrderedDescending;
         return NSOrderedSame;
     }];
-
     NSMutableArray<NSString *> *kept = [NSMutableArray array];
     NSMutableSet<NSString *> *partSeen = [NSMutableSet set];
     for (NSDictionary *item in sorted) {
@@ -276,7 +277,6 @@ static NSString *YTNicoBodyFromLabelItems(NSArray<NSDictionary *> *items) {
         if (bodyPart.length == 0) continue;
         [kept addObject:bodyPart];
     }
-
     if (kept.count == 0 && sorted.count == 1) return YTNicoBodyFromSingleText(sorted.firstObject[@"text"] ?: @"");
     return YTNicoUIScrapeTrim([kept componentsJoinedByString:@" "]);
 }
@@ -296,20 +296,16 @@ static void YTNicoUIScrapeEmitBody(NSString *body, NSString *rowKey) {
     body = YTNicoUIScrapeTrim(body);
     if (body.length == 0) return;
     if (YTNicoUIScrapeRejectText(body) || YTNicoUIScrapeLooksLikeMetadataOnly(body)) return;
-
     if (!gYTNicoUIScrapeSeen) gYTNicoUIScrapeSeen = [NSMutableDictionary dictionary];
     if (!gYTNicoUIScrapeRecentTexts) gYTNicoUIScrapeRecentTexts = [NSMutableArray array];
     YTNicoUIScrapePruneSeen();
-
     NSString *seenKey = [NSString stringWithFormat:@"%@|%@", rowKey ?: @"row", body ?: @""];
     if (gYTNicoUIScrapeSeen[seenKey]) return;
     gYTNicoUIScrapeSeen[seenKey] = @(CACurrentMediaTime());
     [gYTNicoUIScrapeRecentTexts addObject:body];
     while (gYTNicoUIScrapeRecentTexts.count > 100) [gYTNicoUIScrapeRecentTexts removeObjectAtIndex:0];
-
     NSString *mid = [NSString stringWithFormat:@"uirow-%lu-%llu", (unsigned long)[seenKey hash], (unsigned long long)(CACurrentMediaTime() * 1000.0)];
     [YouTubeChatAdapter emitNowAuthor:@"" text:body messageId:mid];
-
     CFTimeInterval now = CACurrentMediaTime();
     if (settings.debugLogging && now - gYTNicoLastUIScrapeLog > 1.0) {
         gYTNicoLastUIScrapeLog = now;
@@ -320,10 +316,7 @@ static void YTNicoUIScrapeEmitBody(NSString *body, NSString *rowKey) {
 static void YTNicoUIScrapeFlushRow(NSString *rowKey) {
     if (rowKey.length == 0) return;
     NSMutableArray<NSDictionary *> *items = gYTNicoUIScrapeRowBuffers[rowKey];
-    if (items.count == 0) {
-        [gYTNicoUIScrapeFlushScheduled removeObject:rowKey];
-        return;
-    }
+    if (items.count == 0) { [gYTNicoUIScrapeFlushScheduled removeObject:rowKey]; return; }
     NSArray<NSDictionary *> *snapshot = [items copy];
     [gYTNicoUIScrapeRowBuffers removeObjectForKey:rowKey];
     [gYTNicoUIScrapeFlushScheduled removeObject:rowKey];
@@ -338,35 +331,24 @@ static void YTNicoUIScrapeBufferText(NSString *rawText, UIView *sourceView) {
     if (![sourceView isKindOfClass:UIView.class]) return;
     YTNicoMaybeUpdateChatSheetHeader(rawText, sourceView);
     if (!YTNicoUIScrapeLooksLikeChatHierarchy(sourceView)) return;
-
     NSString *text = YTNicoUIScrapeTrim(rawText);
     if (text.length == 0) return;
     if (YTNicoUIScrapeRejectText(text) || YTNicoUIScrapeLooksLikeMetadataOnly(text)) return;
-
     UIView *row = YTNicoUIScrapeRowContainer(sourceView);
     NSMutableArray<NSDictionary *> *labels = [NSMutableArray array];
     YTNicoCollectLabelsInView(row, labels);
     if (labels.count >= 2) {
         NSString *body = YTNicoBodyFromLabelItems(labels);
-        if (body.length > 0) {
-            YTNicoUIScrapeEmitBody(body, YTNicoUIScrapeRowKey(row));
-            return;
-        }
+        if (body.length > 0) { YTNicoUIScrapeEmitBody(body, YTNicoUIScrapeRowKey(row)); return; }
     }
-
     if (!gYTNicoUIScrapeRowBuffers) gYTNicoUIScrapeRowBuffers = [NSMutableDictionary dictionary];
     if (!gYTNicoUIScrapeFlushScheduled) gYTNicoUIScrapeFlushScheduled = [NSMutableSet set];
-
     CGRect r = YTNicoUIScrapeWindowRect(sourceView);
     NSString *rowKey = YTNicoUIScrapeRowKey(sourceView);
     if (rowKey.length == 0) return;
     NSMutableArray *bucket = gYTNicoUIScrapeRowBuffers[rowKey];
-    if (!bucket) {
-        bucket = [NSMutableArray array];
-        gYTNicoUIScrapeRowBuffers[rowKey] = bucket;
-    }
+    if (!bucket) { bucket = [NSMutableArray array]; gYTNicoUIScrapeRowBuffers[rowKey] = bucket; }
     [bucket addObject:@{@"text": text, @"x": @(CGRectGetMinX(r)), @"y": @(CGRectGetMidY(r)), @"w": @(CGRectGetWidth(r)), @"h": @(CGRectGetHeight(r))}];
-
     if (![gYTNicoUIScrapeFlushScheduled containsObject:rowKey]) {
         [gYTNicoUIScrapeFlushScheduled addObject:rowKey];
         NSString *keyCopy = [rowKey copy];
@@ -386,8 +368,7 @@ static BOOL YTNicoViewLooksLikeChatRowCandidate(UIView *view) {
     YTNicoCollectLabelsInView(view, labels);
     if (labels.count < 1 || labels.count > 12) return NO;
     NSString *body = YTNicoBodyFromLabelItems(labels);
-    if (body.length == 0) return NO;
-    return YES;
+    return body.length > 0;
 }
 
 static void YTNicoScanRowCandidatesInView(UIView *view) {
@@ -411,11 +392,20 @@ static void YTNicoScanRowCandidatesInView(UIView *view) {
 }
 
 static void YTNicoUIScrapePeriodicScan(void) {
+    if (gYTNicoUIScrapeScanRunning) return;
     if (!YTNicoUIScrapeIsYouTube()) return;
     SettingsManager *settings = SettingsManager.shared;
     if (!settings.enabled) return;
     if ([settings respondsToSelector:@selector(uiScrapeFallback)] && !settings.uiScrapeFallback) return;
-    for (UIWindow *win in UIApplication.sharedApplication.windows) YTNicoScanRowCandidatesInView(win);
+    if (YTNicoUIScrapeShouldYieldToUserInput()) return;
+    gYTNicoUIScrapeScanRunning = YES;
+    @try {
+        for (UIWindow *win in UIApplication.sharedApplication.windows) {
+            if (!win.hidden && win.alpha > 0.02 && win.windowLevel == UIWindowLevelNormal) YTNicoScanRowCandidatesInView(win);
+        }
+    } @finally {
+        gYTNicoUIScrapeScanRunning = NO;
+    }
 }
 
 %hook UILabel
@@ -450,9 +440,9 @@ static void YTNicoUIScrapePeriodicScan(void) {
         gYTNicoUIScrapeRowBuffers = [NSMutableDictionary dictionary];
         gYTNicoUIScrapeFlushScheduled = [NSMutableSet set];
         if (!gYTNicoUIScrapeScanTimer) {
-            gYTNicoUIScrapeScanTimer = [NSTimer scheduledTimerWithTimeInterval:0.55 repeats:YES block:^(__unused NSTimer *timer) { YTNicoUIScrapePeriodicScan(); }];
-            [[NSRunLoop mainRunLoop] addTimer:gYTNicoUIScrapeScanTimer forMode:NSRunLoopCommonModes];
+            gYTNicoUIScrapeScanTimer = [NSTimer scheduledTimerWithTimeInterval:1.20 repeats:YES block:^(__unused NSTimer *timer) { YTNicoUIScrapePeriodicScan(); }];
+            [[NSRunLoop mainRunLoop] addTimer:gYTNicoUIScrapeScanTimer forMode:NSDefaultRunLoopMode];
         }
-        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"UI chat scrape fallback loaded header-bounded cell-scan mode"];
+        if (SettingsManager.shared.debugLogging) [[DebugInspector shared] important:@"UI chat scrape fallback loaded safe input mode"];
     });
 }
