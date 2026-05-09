@@ -2,13 +2,24 @@ name: Build YTNicoChatOverlay deb
 
 on:
   workflow_dispatch:
+    inputs:
+      upload_release:
+        description: "Upload .deb directly to a GitHub Release"
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: "Release tag name. Empty = auto ytnico-deb-${run_number}"
+        required: false
+        type: string
+        default: ""
   push:
     paths:
       - "YTNicoChatOverlay/**"
       - ".github/workflows/build-deb.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -73,11 +84,56 @@ jobs:
           echo "Generated packages:"
           find packages .theos/packages -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \; 2>/dev/null || true
 
+      - name: Collect deb files
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          find YTNicoChatOverlay/packages YTNicoChatOverlay/.theos/packages -maxdepth 1 -type f -name "*.deb" -exec cp -f {} dist/ \; 2>/dev/null || true
+          count="$(find dist -maxdepth 1 -type f -name "*.deb" | wc -l | tr -d ' ')"
+          if [ "$count" = "0" ]; then
+            echo "No .deb files found" >&2
+            exit 1
+          fi
+          echo "Collected .deb files:"
+          find dist -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \;
+          {
+            echo "## Generated .deb"
+            find dist -maxdepth 1 -type f -name "*.deb" -print | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload deb artifact
         uses: actions/upload-artifact@v7
         with:
           name: yt-nico-chat-overlay-deb
-          path: |
-            YTNicoChatOverlay/packages/*.deb
-            YTNicoChatOverlay/.theos/packages/*.deb
+          path: dist/*.deb
           if-no-files-found: error
+
+      - name: Decide release tag
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_release
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if [ -z "$tag" ]; then
+            tag="ytnico-deb-${{ github.run_number }}"
+          fi
+          echo "YTNICO_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "Release tag: $tag"
+
+      - name: Upload deb directly to GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$YTNICO_RELEASE_TAG"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists: $tag"
+          else
+            gh release create "$tag" --title "YTNicoChatOverlay deb $tag" --notes "Automated .deb build from GitHub Actions run $GITHUB_RUN_NUMBER."
+          fi
+          gh release upload "$tag" dist/*.deb --clobber
+          {
+            echo "## Direct .deb Release"
+            echo "Uploaded .deb directly to release: $tag"
+          } >> "$GITHUB_STEP_SUMMARY"
