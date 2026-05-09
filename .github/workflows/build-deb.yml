@@ -89,24 +89,27 @@ jobs:
           set -euo pipefail
           rm -rf dist
           mkdir -p dist
-          find YTNicoChatOverlay/packages YTNicoChatOverlay/.theos/packages -maxdepth 1 -type f -name "*.deb" -exec cp -f {} dist/ \; 2>/dev/null || true
-          count="$(find dist -maxdepth 1 -type f -name "*.deb" | wc -l | tr -d ' ')"
-          if [ "$count" = "0" ]; then
+          mapfile -t debs < <(find YTNicoChatOverlay/packages YTNicoChatOverlay/.theos/packages -maxdepth 1 -type f -name "*.deb" -print 2>/dev/null | sort -u)
+          if [ "${#debs[@]}" -eq 0 ]; then
             echo "No .deb files found" >&2
             exit 1
           fi
-          echo "Collected .deb files:"
-          find dist -maxdepth 1 -type f -name "*.deb" -print -exec ls -lh {} \;
+          latest="$(ls -t "${debs[@]}" | head -n 1)"
+          cp -f "$latest" dist/YTNicoChatOverlay.deb
+          echo "Selected artifact source: $latest"
+          echo "Single direct artifact: dist/YTNicoChatOverlay.deb"
+          ls -lh dist/YTNicoChatOverlay.deb
           {
             echo "## Generated .deb"
-            find dist -maxdepth 1 -type f -name "*.deb" -print | sed 's/^/- /'
+            echo "- dist/YTNicoChatOverlay.deb"
+            echo "- source: $latest"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v7
         with:
-          name: yt-nico-chat-overlay-deb
-          path: dist/*.deb
+          path: dist/YTNicoChatOverlay.deb
+          archive: false
           if-no-files-found: error
 
       - name: Decide release tag
@@ -132,7 +135,7 @@ jobs:
           else
             gh release create "$tag" --title "YTNicoChatOverlay deb $tag" --notes "Automated .deb build from GitHub Actions run $GITHUB_RUN_NUMBER."
           fi
-          gh release upload "$tag" dist/*.deb --clobber
+          gh release upload "$tag" dist/YTNicoChatOverlay.deb --clobber
           {
             echo "## Direct .deb Release"
             echo "Uploaded .deb directly to release: $tag"
