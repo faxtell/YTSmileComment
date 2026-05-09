@@ -7,6 +7,8 @@
 #import "DebugInspector.h"
 #import "YTNicoSettingsViewController.h"
 
+extern "C" NSUInteger YTNicoManualScanVisibleChatPanel(void);
+
 @interface YouTubeChatAdapter (YTNicoManualFetch)
 + (void)ytnico_fetchCommentsForVideoIdIgnoringThrottle:(NSString *)videoId;
 @end
@@ -396,18 +398,24 @@ static const void *kToastKey = &kToastKey;
 
 - (void)toggleOverlayEnabled {
     SettingsManager *settings = [SettingsManager shared];
-    BOOL nextEnabled = !settings.enabled;
-    [settings setEnabled:nextEnabled];
-    [self updateToggleButtonAppearance];
-
-    if (nextEnabled) {
-        NSString *videoId = [self bestManualVideoId];
-        [self startManualFetchForVideoId:videoId source:@"💬"];
+    if (!settings.enabled) {
+        [settings setEnabled:YES];
+        [self updateToggleButtonAppearance];
+        [self ensureOverlayAttached];
+        [self showSystemToast:@"コメント表示をONにしました"];
     } else {
-        [YouTubeChatAdapter clearCurrentVideoAndComments];
-        [self clearOverlayForVideoChange];
-        [self showSystemToast:@"コメントを非表示にしました"];
+        [self ensureOverlayAttached];
     }
+
+    NSUInteger scanned = YTNicoManualScanVisibleChatPanel();
+    if (scanned > 0) {
+        [self showSystemToast:[NSString stringWithFormat:@"表示中のチャットを読み取りました: %lu件", (unsigned long)scanned]];
+        [[DebugInspector shared] important:@"manual UI scan emitted=%lu", (unsigned long)scanned];
+        return;
+    }
+
+    [self showSystemToast:@"チャット欄を開いてから💬を押してください"];
+    [[DebugInspector shared] important:@"manual UI scan emitted=0"];
 }
 
 - (void)handleSettingsLongPress:(UILongPressGestureRecognizer *)gesture {
